@@ -1,0 +1,6 @@
+/target/
+**/target/
+*.wasm
+!fixtures/**/*.wasm
+*.plan.json
+.DS_Store
