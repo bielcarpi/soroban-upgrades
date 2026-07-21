@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/soroban-upgrades-core",
+    "crates/soroban-upgrades-cli",
+    "examples/counter-v1",
+    "examples/counter-v2",
+    "examples/counter-unsafe",
+    "examples/cap86-v1",
+    "examples/cap86-v2",
+    "examples/cap86-unsafe",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+rust-version = "1.93"
+license = "Apache-2.0"
+repository = "https://github.com/bielcarpi/soroban-upgrades"
+authors = ["Soroban Upgrades contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+semver = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+soroban-sdk = "27.0.2"
+soroban-spec = "27.0.2"
+stellar-xdr = { version = "=27.0.0", features = ["serde"] }
+stellar-strkey = "0.0.13"
+thiserror = "2.0"
+wasmparser = "0.244"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
