@@ -1,0 +1,25 @@
+[package]
+name = "soroban-upgrades-core"
+description = "Upgrade-safety analysis and planning for Stellar Soroban contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+hex.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+soroban-spec.workspace = true
+stellar-xdr.workspace = true
+stellar-strkey.workspace = true
+thiserror.workspace = true
+wasmparser.workspace = true
+
+[dev-dependencies]
+wat = "1.244"
+serde_json.workspace = true
