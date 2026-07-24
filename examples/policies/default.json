@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "name": "soroban-upgrades-default",
+  "requireUpgradeFunction": true,
+  "forbidConstructor": false,
+  "requireSemverIncrease": true,
+  "denyRemovedFunctions": true,
+  "denyChangedFunctions": true,
+  "denyChangedUserTypes": true
+}
