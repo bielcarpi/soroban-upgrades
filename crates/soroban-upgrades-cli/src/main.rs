@@ -2,9 +2,9 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use soroban_upgrades_core::{
-    create_plan, validate_with_history, verify_plan_digest, Artifact, Policy, ProtocolSource,
-    SchemaHistory, Severity, StorageSchema, UpgradePlan, ValidationContext, ValidationReport,
-    MAX_ARTIFACT_SIZE_BYTES,
+    create_plan, validate_with_history, verify_plan_digest, Artifact, BoundaryPosition,
+    EvidenceItem, EvidenceStatus, Policy, ProtocolSource, PublicImpact, SchemaHistory, Severity,
+    StorageSchema, UpgradePlan, ValidationContext, ValidationReport, MAX_ARTIFACT_SIZE_BYTES,
 };
 use std::{
     collections::BTreeSet,
@@ -370,6 +370,23 @@ fn print_artifact(path: &Path, artifact: &Artifact) {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    println!("Entrypoint host-import reachability:");
+    for (entrypoint, evidence) in &artifact.export_call_evidence {
+        let imports = if evidence.host_imports.is_empty() {
+            "none".to_owned()
+        } else {
+            evidence
+                .host_imports
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!(
+            "  {entrypoint}: {imports}; dynamic dispatch reachable: {}",
+            evidence.dynamic_dispatch_reachable
+        );
+    }
 }
 
 fn print_report(report: &ValidationReport) {
@@ -412,18 +429,21 @@ fn print_report(report: &ValidationReport) {
         report.target.uses_cap_0086_sparse_read(),
         report.target.uses_cap_0086_sparse_write()
     );
-    println!("Evidence boundary:");
-    println!("  Contract Spec and artifact-wide host imports: observed");
-    println!(
-        "  Storage layout: {}",
-        if report.storage_schema_checked {
-            "manifests compared; declarations are not ledger-state proof"
-        } else {
-            "unknown; no complete manifest pair"
+    println!("Evidence coverage (FACT / INFERENCE / UNKNOWN):");
+    for (name, item) in evidence_items(report) {
+        print_evidence_item(name, item);
+    }
+    if !report.public_impacts.is_empty() {
+        println!("Retained public impact paths:");
+        for impact in &report.public_impacts {
+            println!("  {}", format_public_impact(impact));
+            println!(
+                "    structural reachability: {}; runtime compatibility: {}",
+                evidence_status_label(&impact.structural_reachability),
+                evidence_status_label(&impact.runtime_compatibility)
+            );
         }
-    );
-    println!("  Deployed callers and rollout order: unknown");
-    println!("  Per-type CAP-0086 reader binding: not proven by a global WASM import");
+    }
     for finding in &report.findings {
         let label = match finding.severity {
             Severity::Info => "INFO",
@@ -434,6 +454,88 @@ fn print_report(report: &ValidationReport) {
         println!("  {}", finding.detail);
         println!("  Fix: {}", finding.remediation);
     }
+}
+
+fn evidence_items(report: &ValidationReport) -> [(&'static str, &EvidenceItem); 9] {
+    [
+        (
+            "compiled Contract Spec",
+            &report.evidence.compiled_contract_spec,
+        ),
+        (
+            "artifact host imports",
+            &report.evidence.artifact_host_imports,
+        ),
+        (
+            "target network protocol",
+            &report.evidence.target_network_protocol,
+        ),
+        (
+            "declared storage schema",
+            &report.evidence.declared_storage_schema,
+        ),
+        (
+            "declared schema history",
+            &report.evidence.declared_schema_history,
+        ),
+        (
+            "ledger storage coverage",
+            &report.evidence.ledger_storage_coverage,
+        ),
+        (
+            "deployed caller graph",
+            &report.evidence.deployed_caller_graph,
+        ),
+        (
+            "CAP-0086 per-type reader binding",
+            &report.evidence.cap0086_per_type_reader_binding,
+        ),
+        (
+            "migration completion",
+            &report.evidence.migration_completion,
+        ),
+    ]
+}
+
+fn evidence_status_label(status: &EvidenceStatus) -> &'static str {
+    match status {
+        EvidenceStatus::Fact => "FACT",
+        EvidenceStatus::Inference => "INFERENCE",
+        EvidenceStatus::Unknown => "UNKNOWN",
+    }
+}
+
+fn print_evidence_item(name: &str, item: &EvidenceItem) {
+    println!(
+        "  [{}] {name}: {}",
+        evidence_status_label(&item.status),
+        item.claim
+    );
+    println!("    Basis: {}", item.basis);
+    if let Some(limitation) = &item.limitation {
+        println!("    Limit: {limitation}");
+    }
+}
+
+fn format_public_impact(impact: &PublicImpact) -> String {
+    let position = match impact.boundary.position {
+        BoundaryPosition::Input => "input",
+        BoundaryPosition::Output => "output",
+    };
+    let label = impact
+        .boundary
+        .label
+        .as_deref()
+        .map_or_else(String::new, |label| format!(" `{label}`"));
+    let mut path = format!(
+        "{}() {position}[{}]{label} -> {}",
+        impact.boundary.function, impact.boundary.index, impact.boundary.root_type
+    );
+    for step in &impact.steps {
+        path.push_str(&format!(".{} -> {}", step.member, step.target_type));
+    }
+    path.push_str(&format!(" (changed {})", impact.changed_type));
+    path
 }
 
 fn print_compact_report(report: &ValidationReport) {
@@ -501,6 +603,15 @@ fn print_compact_report(report: &ValidationReport) {
         report.target.uses_cap_0086_sparse_read(),
         report.target.uses_cap_0086_sparse_write()
     );
+    for impact in report.public_impacts.iter().take(3) {
+        println!("  public impact: {}", format_public_impact(impact));
+    }
+    if report.public_impacts.len() > 3 {
+        println!(
+            "  public impact: {} additional path(s) in the full JSON report",
+            report.public_impacts.len() - 3
+        );
+    }
 }
 
 fn short_hash(hash: &str) -> &str {

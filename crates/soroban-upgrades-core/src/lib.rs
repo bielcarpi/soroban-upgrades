@@ -15,7 +15,8 @@ use std::{
     io::Cursor,
 };
 use stellar_xdr::{
-    Error as XdrError, Limited, Limits, ReadXdr, ScMetaEntry, ScMetaV0, ScSpecEntry,
+    Error as XdrError, Limited, Limits, ReadXdr, ScMetaEntry, ScMetaV0, ScSpecEntry, ScSpecTypeDef,
+    ScSpecUdtUnionCaseV0,
 };
 
 const SPEC_XDR_DEPTH_LIMIT: u32 = 500;
@@ -41,6 +42,8 @@ pub enum Error {
     DuplicateMetadataKey(String),
     #[error("invalid WASM binary: {0}")]
     Wasm(#[from] wasmparser::BinaryReaderError),
+    #[error("incomplete WASM call-graph evidence: {0}")]
+    CallGraph(String),
     #[error("invalid XDR metadata: {0}")]
     Xdr(#[from] XdrError),
     #[error("invalid JSON: {0}")]
@@ -171,6 +174,38 @@ pub struct InterfaceEntry {
     pub canonical: serde_json::Value,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundaryPosition {
+    Input,
+    Output,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicTypeBoundary {
+    pub function: String,
+    pub position: BoundaryPosition,
+    pub index: usize,
+    pub label: Option<String>,
+    pub root_type: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TypeReference {
+    pub owner_type: String,
+    pub member: String,
+    pub target_type: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportCallEvidence {
+    pub host_imports: BTreeSet<String>,
+    pub dynamic_dispatch_reachable: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
@@ -180,6 +215,9 @@ pub struct Artifact {
     pub host_imports: BTreeSet<String>,
     pub functions: BTreeMap<String, InterfaceEntry>,
     pub user_types: BTreeMap<String, InterfaceEntry>,
+    pub public_type_boundaries: Vec<PublicTypeBoundary>,
+    pub type_references: Vec<TypeReference>,
+    pub export_call_evidence: BTreeMap<String, ExportCallEvidence>,
 }
 
 impl Artifact {
@@ -195,14 +233,43 @@ impl Artifact {
         let spec = soroban_spec::read::from_wasm(bytes)?;
         let metadata = read_contract_metadata(bytes)?;
         let host_imports = read_host_imports(bytes)?;
+        let export_call_evidence = inspect_export_call_evidence(bytes)?;
         let mut functions = BTreeMap::new();
         let mut user_types = BTreeMap::new();
+        let mut public_type_boundaries = BTreeSet::new();
+        let mut type_references = BTreeSet::new();
 
         for entry in spec.iter() {
             let canonical = canonicalize_spec_entry(entry)?;
             match entry {
                 ScSpecEntry::FunctionV0(function) => {
                     let name = function.name.to_utf8_string_lossy();
+                    for (index, input) in function.inputs.iter().enumerate() {
+                        let mut referenced = BTreeSet::new();
+                        collect_udt_names(&input.type_, &mut referenced);
+                        for root_type in referenced {
+                            public_type_boundaries.insert(PublicTypeBoundary {
+                                function: name.clone(),
+                                position: BoundaryPosition::Input,
+                                index,
+                                label: Some(input.name.to_utf8_string_lossy()),
+                                root_type,
+                            });
+                        }
+                    }
+                    for (index, output) in function.outputs.iter().enumerate() {
+                        let mut referenced = BTreeSet::new();
+                        collect_udt_names(output, &mut referenced);
+                        for root_type in referenced {
+                            public_type_boundaries.insert(PublicTypeBoundary {
+                                function: name.clone(),
+                                position: BoundaryPosition::Output,
+                                index,
+                                label: None,
+                                root_type,
+                            });
+                        }
+                    }
                     if functions
                         .insert(
                             name.clone(),
@@ -220,18 +287,41 @@ impl Artifact {
                         });
                     }
                 }
-                ScSpecEntry::UdtStructV0(value) => insert_user_type(
-                    &mut user_types,
-                    "struct",
-                    value.name.to_utf8_string_lossy(),
-                    canonical,
-                )?,
-                ScSpecEntry::UdtUnionV0(value) => insert_user_type(
-                    &mut user_types,
-                    "union",
-                    value.name.to_utf8_string_lossy(),
-                    canonical,
-                )?,
+                ScSpecEntry::UdtStructV0(value) => {
+                    let owner_type = value.name.to_utf8_string_lossy();
+                    for field in value.fields.iter() {
+                        let mut referenced = BTreeSet::new();
+                        collect_udt_names(&field.type_, &mut referenced);
+                        for target_type in referenced {
+                            type_references.insert(TypeReference {
+                                owner_type: owner_type.clone(),
+                                member: field.name.to_utf8_string_lossy(),
+                                target_type,
+                            });
+                        }
+                    }
+                    insert_user_type(&mut user_types, "struct", owner_type, canonical)?;
+                }
+                ScSpecEntry::UdtUnionV0(value) => {
+                    let owner_type = value.name.to_utf8_string_lossy();
+                    for case in value.cases.iter() {
+                        if let ScSpecUdtUnionCaseV0::TupleV0(tuple) = case {
+                            let case_name = tuple.name.to_utf8_string_lossy();
+                            for (index, value_type) in tuple.type_.iter().enumerate() {
+                                let mut referenced = BTreeSet::new();
+                                collect_udt_names(value_type, &mut referenced);
+                                for target_type in referenced {
+                                    type_references.insert(TypeReference {
+                                        owner_type: owner_type.clone(),
+                                        member: format!("{case_name}[{index}]"),
+                                        target_type,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    insert_user_type(&mut user_types, "union", owner_type, canonical)?;
+                }
                 ScSpecEntry::UdtEnumV0(value) => insert_user_type(
                     &mut user_types,
                     "enum",
@@ -255,6 +345,9 @@ impl Artifact {
             host_imports,
             functions,
             user_types,
+            public_type_boundaries: public_type_boundaries.into_iter().collect(),
+            type_references: type_references.into_iter().collect(),
+            export_call_evidence,
         })
     }
 
@@ -272,6 +365,49 @@ impl Artifact {
 
     pub fn uses_cap_0086_sparse_write(&self) -> bool {
         self.host_imports.contains(CAP_0086_SPARSE_WRITE_IMPORT)
+    }
+}
+
+fn collect_udt_names(value_type: &ScSpecTypeDef, destination: &mut BTreeSet<String>) {
+    match value_type {
+        ScSpecTypeDef::Udt(value) => {
+            destination.insert(value.name.to_utf8_string_lossy());
+        }
+        ScSpecTypeDef::Option(value) => collect_udt_names(&value.value_type, destination),
+        ScSpecTypeDef::Result(value) => {
+            collect_udt_names(&value.ok_type, destination);
+            collect_udt_names(&value.error_type, destination);
+        }
+        ScSpecTypeDef::Vec(value) => collect_udt_names(&value.element_type, destination),
+        ScSpecTypeDef::Map(value) => {
+            collect_udt_names(&value.key_type, destination);
+            collect_udt_names(&value.value_type, destination);
+        }
+        ScSpecTypeDef::Tuple(value) => {
+            for member in value.value_types.iter() {
+                collect_udt_names(member, destination);
+            }
+        }
+        ScSpecTypeDef::Val
+        | ScSpecTypeDef::Bool
+        | ScSpecTypeDef::Void
+        | ScSpecTypeDef::Error
+        | ScSpecTypeDef::U32
+        | ScSpecTypeDef::I32
+        | ScSpecTypeDef::U64
+        | ScSpecTypeDef::I64
+        | ScSpecTypeDef::Timepoint
+        | ScSpecTypeDef::Duration
+        | ScSpecTypeDef::U128
+        | ScSpecTypeDef::I128
+        | ScSpecTypeDef::U256
+        | ScSpecTypeDef::I256
+        | ScSpecTypeDef::Bytes
+        | ScSpecTypeDef::String
+        | ScSpecTypeDef::Symbol
+        | ScSpecTypeDef::Address
+        | ScSpecTypeDef::MuxedAddress
+        | ScSpecTypeDef::BytesN(_) => {}
     }
 }
 
@@ -367,17 +503,131 @@ fn read_contract_metadata(bytes: &[u8]) -> Result<BTreeMap<String, String>, Erro
     Ok(metadata)
 }
 
+#[derive(Default)]
+struct FunctionBodyCalls {
+    direct_calls: Vec<u32>,
+    has_dynamic_dispatch: bool,
+}
+
 fn read_host_imports(bytes: &[u8]) -> Result<BTreeSet<String>, Error> {
     let mut imports = BTreeSet::new();
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let wasmparser::Payload::ImportSection(section) = payload? {
             for import in section.into_imports() {
                 let import = import?;
-                imports.insert(format!("{}.{}", import.module, import.name));
+                if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                    imports.insert(format!("{}.{}", import.module, import.name));
+                }
             }
         }
     }
     Ok(imports)
+}
+
+pub fn inspect_export_call_evidence(
+    bytes: &[u8],
+) -> Result<BTreeMap<String, ExportCallEvidence>, Error> {
+    let mut function_imports = Vec::new();
+    let mut function_exports = BTreeMap::new();
+    let mut function_bodies = Vec::new();
+
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload? {
+            wasmparser::Payload::ImportSection(section) => {
+                for import in section.into_imports() {
+                    let import = import?;
+                    if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                        function_imports.push(format!("{}.{}", import.module, import.name));
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(section) => {
+                for export in section {
+                    let export = export?;
+                    if export.kind == wasmparser::ExternalKind::Func {
+                        function_exports.insert(export.name.to_owned(), export.index);
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                let mut calls = FunctionBodyCalls::default();
+                let mut operators = body.get_operators_reader()?;
+                while !operators.eof() {
+                    match operators.read()? {
+                        wasmparser::Operator::Call { function_index }
+                        | wasmparser::Operator::ReturnCall { function_index } => {
+                            calls.direct_calls.push(function_index);
+                        }
+                        wasmparser::Operator::CallIndirect { .. }
+                        | wasmparser::Operator::ReturnCallIndirect { .. }
+                        | wasmparser::Operator::CallRef { .. }
+                        | wasmparser::Operator::ReturnCallRef { .. } => {
+                            calls.has_dynamic_dispatch = true;
+                        }
+                        _ => {}
+                    }
+                }
+                function_bodies.push(calls);
+            }
+            _ => {}
+        }
+    }
+
+    let imported_function_count = u32::try_from(function_imports.len())
+        .map_err(|_| Error::CallGraph("too many function imports to inspect".into()))?;
+    let mut result = BTreeMap::new();
+    for (export, function_index) in function_exports {
+        let mut visited = BTreeSet::new();
+        let mut evidence = ExportCallEvidence::default();
+        collect_export_call_evidence(
+            function_index,
+            imported_function_count,
+            &function_imports,
+            &function_bodies,
+            &mut visited,
+            &mut evidence,
+        )?;
+        result.insert(export, evidence);
+    }
+    Ok(result)
+}
+
+fn collect_export_call_evidence(
+    function_index: u32,
+    imported_function_count: u32,
+    function_imports: &[String],
+    function_bodies: &[FunctionBodyCalls],
+    visited: &mut BTreeSet<u32>,
+    evidence: &mut ExportCallEvidence,
+) -> Result<(), Error> {
+    if function_index < imported_function_count {
+        let import = function_imports
+            .get(function_index as usize)
+            .ok_or_else(|| Error::CallGraph("function import index is out of range".into()))?;
+        evidence.host_imports.insert(import.clone());
+        return Ok(());
+    }
+    if !visited.insert(function_index) {
+        return Ok(());
+    }
+
+    let body_index = usize::try_from(function_index - imported_function_count)
+        .map_err(|_| Error::CallGraph("function body index does not fit this platform".into()))?;
+    let body = function_bodies
+        .get(body_index)
+        .ok_or_else(|| Error::CallGraph("function body index is out of range".into()))?;
+    evidence.dynamic_dispatch_reachable |= body.has_dynamic_dispatch;
+    for called in &body.direct_calls {
+        collect_export_call_evidence(
+            *called,
+            imported_function_count,
+            function_imports,
+            function_bodies,
+            visited,
+            evidence,
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -514,6 +764,55 @@ impl SchemaHistory {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EvidenceStatus {
+    Fact,
+    Inference,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EvidenceItem {
+    pub status: EvidenceStatus,
+    pub claim: String,
+    pub basis: String,
+    pub limitation: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EvidenceCoverage {
+    pub compiled_contract_spec: EvidenceItem,
+    pub artifact_host_imports: EvidenceItem,
+    pub target_network_protocol: EvidenceItem,
+    pub declared_storage_schema: EvidenceItem,
+    pub declared_schema_history: EvidenceItem,
+    pub ledger_storage_coverage: EvidenceItem,
+    pub deployed_caller_graph: EvidenceItem,
+    pub cap0086_per_type_reader_binding: EvidenceItem,
+    pub migration_completion: EvidenceItem,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImpactStep {
+    pub owner_type: String,
+    pub member: String,
+    pub target_type: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicImpact {
+    pub changed_type: String,
+    pub boundary: PublicTypeBoundary,
+    pub steps: Vec<ImpactStep>,
+    pub structural_reachability: EvidenceStatus,
+    pub runtime_compatibility: EvidenceStatus,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationReport {
@@ -523,6 +822,8 @@ pub struct ValidationReport {
     pub source: Artifact,
     pub target: Artifact,
     pub findings: Vec<Finding>,
+    pub public_impacts: Vec<PublicImpact>,
+    pub evidence: EvidenceCoverage,
     pub storage_schema_checked: bool,
     pub schema_history_checked: bool,
     pub schema_history_sha256: Option<String>,
@@ -643,6 +944,12 @@ pub fn validate_with_history(
 
     findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.code.cmp(&b.code)));
     let safe = !findings.iter().any(|f| f.severity == Severity::Error);
+    let public_impacts = trace_public_impacts(source, target);
+    let evidence = build_evidence_coverage(
+        context,
+        source_schema.is_some() && target_schema.is_some(),
+        schema_history.is_some(),
+    );
     ValidationReport {
         safe,
         policy: policy.clone(),
@@ -650,10 +957,244 @@ pub fn validate_with_history(
         source: source.clone(),
         target: target.clone(),
         findings,
+        public_impacts,
+        evidence,
         storage_schema_checked: source_schema.is_some() && target_schema.is_some(),
         schema_history_checked: schema_history.is_some(),
         schema_history_sha256: schema_history.map(|history| history.source_sha256.clone()),
     }
+}
+
+fn evidence_item(
+    status: EvidenceStatus,
+    claim: &str,
+    basis: &str,
+    limitation: Option<&str>,
+) -> EvidenceItem {
+    EvidenceItem {
+        status,
+        claim: claim.into(),
+        basis: basis.into(),
+        limitation: limitation.map(str::to_owned),
+    }
+}
+
+fn build_evidence_coverage(
+    context: &ValidationContext,
+    storage_schema_checked: bool,
+    schema_history_checked: bool,
+) -> EvidenceCoverage {
+    let target_network_protocol = match context.protocol_source {
+        ProtocolSource::StellarCliNetworkInfo
+            if context.target_protocol_version.is_some()
+                && context.network_name.is_some()
+                && context.network_id.is_some()
+                && context.observed_at_unix_seconds.is_some() =>
+        {
+            evidence_item(
+                EvidenceStatus::Fact,
+                "The named network reported the recorded target protocol at the observation time.",
+                "Live Stellar CLI network-info evidence is embedded in the report.",
+                Some("Network state can change; resolve it again immediately before execution."),
+            )
+        }
+        ProtocolSource::OfflineAssertion => evidence_item(
+            EvidenceStatus::Inference,
+            "The selected protocol is an offline release assumption.",
+            "The operator supplied a protocol number without live network evidence.",
+            Some("This does not prove that any named network has activated the protocol."),
+        ),
+        _ => evidence_item(
+            EvidenceStatus::Unknown,
+            "The target network protocol is not established.",
+            "No complete live network evidence is present.",
+            Some("Resolve a named network before producing an executable release plan."),
+        ),
+    };
+
+    EvidenceCoverage {
+        compiled_contract_spec: evidence_item(
+            EvidenceStatus::Fact,
+            "The report compares the exact compiled Contract Spec entries in both artifacts.",
+            "The validator parsed one unambiguous contractspecv0 section from each hashed WASM.",
+            Some("Contract Spec is not a complete deployed-caller or storage inventory."),
+        ),
+        artifact_host_imports: evidence_item(
+            EvidenceStatus::Fact,
+            "The report records artifact-wide host imports and direct per-export reachability.",
+            "The validator inspected the WASM import, export, and code sections.",
+            Some("Dynamic dispatch is flagged because static reachability would be incomplete."),
+        ),
+        target_network_protocol,
+        declared_storage_schema: if storage_schema_checked {
+            evidence_item(
+                EvidenceStatus::Fact,
+                "The source-controlled source and target storage declarations were compared.",
+                "A complete manifest pair was supplied and bound to the validation report.",
+                Some("A declaration does not prove that it covers every ledger entry."),
+            )
+        } else {
+            evidence_item(
+                EvidenceStatus::Unknown,
+                "The declared storage change is not established.",
+                "No complete source/target manifest pair was supplied.",
+                Some("Contract Spec alone cannot recover a complete storage inventory."),
+            )
+        },
+        declared_schema_history: if schema_history_checked {
+            evidence_item(
+                EvidenceStatus::Fact,
+                "A cumulative source-controlled field history was checked.",
+                "The history bytes are hashed into the validation and release plan.",
+                Some("The history is a reviewed declaration, not proof of ledger-wide migration."),
+            )
+        } else {
+            evidence_item(
+                EvidenceStatus::Unknown,
+                "Historical field-name lifecycle is not established.",
+                "No cumulative schema-history manifest was supplied.",
+                Some("A two-release diff cannot detect older retired-name reuse."),
+            )
+        },
+        ledger_storage_coverage: evidence_item(
+            EvidenceStatus::Unknown,
+            "Complete live and archived ledger storage coverage is not proven.",
+            "The MVP does not yet sample or enumerate deployed ledger state.",
+            Some("Snapshot sampling and migration rehearsal are funded scope."),
+        ),
+        deployed_caller_graph: evidence_item(
+            EvidenceStatus::Unknown,
+            "The complete deployed caller graph and rollout order are not proven.",
+            "Public impact paths are structural paths inside the two compiled Contract Specs.",
+            Some("External contracts and off-chain clients can exist outside both artifacts."),
+        ),
+        cap0086_per_type_reader_binding: evidence_item(
+            EvidenceStatus::Unknown,
+            "A global sparse-reader import is not bound to the changed type.",
+            "Per-export direct-call reachability narrows the evidence but generated type-level binding is absent.",
+            Some("Approve schema evolution only after type-specific runtime and rollout evidence."),
+        ),
+        migration_completion: evidence_item(
+            EvidenceStatus::Unknown,
+            "Ledger-wide migration completion and invariant preservation are not proven.",
+            "The MVP validates declarations and includes one reference Testnet execution.",
+            Some("Generalized state rehearsal and completion evidence are funded scope."),
+        ),
+    }
+}
+
+fn trace_public_impacts(source: &Artifact, target: &Artifact) -> Vec<PublicImpact> {
+    let changed_types = source
+        .user_types
+        .iter()
+        .filter_map(|(name, before)| {
+            target
+                .user_types
+                .get(name)
+                .filter(|after| after.canonical != before.canonical)
+                .map(|_| name.clone())
+        })
+        .collect::<BTreeSet<_>>();
+
+    let source_boundaries = source
+        .public_type_boundaries
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let target_boundaries = target
+        .public_type_boundaries
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let retained_boundaries = source_boundaries
+        .intersection(&target_boundaries)
+        .filter(|boundary| {
+            source
+                .functions
+                .get(&boundary.function)
+                .map(|entry| &entry.canonical)
+                == target
+                    .functions
+                    .get(&boundary.function)
+                    .map(|entry| &entry.canonical)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut impacts = BTreeSet::new();
+    for boundary in retained_boundaries {
+        for changed_type in &changed_types {
+            let source_routes = routes_to_type(source, &boundary.root_type, changed_type);
+            let target_routes = routes_to_type(target, &boundary.root_type, changed_type);
+            for steps in source_routes.intersection(&target_routes) {
+                impacts.insert(PublicImpact {
+                    changed_type: changed_type.clone(),
+                    boundary: boundary.clone(),
+                    steps: steps.clone(),
+                    structural_reachability: EvidenceStatus::Fact,
+                    runtime_compatibility: EvidenceStatus::Unknown,
+                });
+            }
+        }
+    }
+    impacts.into_iter().collect()
+}
+
+fn routes_to_type(
+    artifact: &Artifact,
+    root_type: &str,
+    target_type: &str,
+) -> BTreeSet<Vec<ImpactStep>> {
+    fn walk(
+        artifact: &Artifact,
+        current: &str,
+        target: &str,
+        steps: &mut Vec<ImpactStep>,
+        active_types: &mut BTreeSet<String>,
+        result: &mut BTreeSet<Vec<ImpactStep>>,
+    ) {
+        if current == target {
+            result.insert(steps.clone());
+            return;
+        }
+        if !active_types.insert(current.to_owned()) {
+            return;
+        }
+        for edge in artifact
+            .type_references
+            .iter()
+            .filter(|edge| edge.owner_type == current)
+        {
+            steps.push(ImpactStep {
+                owner_type: edge.owner_type.clone(),
+                member: edge.member.clone(),
+                target_type: edge.target_type.clone(),
+            });
+            walk(
+                artifact,
+                &edge.target_type,
+                target,
+                steps,
+                active_types,
+                result,
+            );
+            steps.pop();
+        }
+        active_types.remove(current);
+    }
+
+    let mut result = BTreeSet::new();
+    if artifact.user_types.contains_key(root_type) {
+        walk(
+            artifact,
+            root_type,
+            target_type,
+            &mut Vec::new(),
+            &mut BTreeSet::new(),
+            &mut result,
+        );
+    }
+    result
 }
 
 fn check_policy(policy: &Policy, findings: &mut Vec<Finding>) {
@@ -805,6 +1346,64 @@ fn check_cap_0086(target: &Artifact, context: &ValidationContext, findings: &mut
             "Sparse writer is enabled without sparse reader",
             "Omitting `Void` fields can break older strict readers in cross-contract calls when contracts are upgraded independently.",
             "Prefer sparse reads first, keep sparse writes explicitly opt-in, and validate a staged dependency-aware rollout.",
+        ));
+    }
+
+    let sparse_read_exports = target
+        .export_call_evidence
+        .iter()
+        .filter_map(|(export, evidence)| {
+            evidence
+                .host_imports
+                .contains(CAP_0086_SPARSE_READ_IMPORT)
+                .then_some(export.as_str())
+        })
+        .collect::<Vec<_>>();
+    let sparse_write_exports = target
+        .export_call_evidence
+        .iter()
+        .filter_map(|(export, evidence)| {
+            evidence
+                .host_imports
+                .contains(CAP_0086_SPARSE_WRITE_IMPORT)
+                .then_some(export.as_str())
+        })
+        .collect::<Vec<_>>();
+    let dynamic_exports = target
+        .export_call_evidence
+        .iter()
+        .filter_map(|(export, evidence)| {
+            evidence
+                .dynamic_dispatch_reachable
+                .then_some(export.as_str())
+        })
+        .collect::<Vec<_>>();
+
+    if sparse_read && sparse_read_exports.is_empty() {
+        findings.push(error(
+            "CAP007",
+            "Sparse-reader import is not directly reachable from an exported function",
+            "The candidate imports `m.c`, but the direct-call graph does not connect that import to any exported function. An unused or dynamically reached import is not evidence that a contract entrypoint decodes sparsely.",
+            "Provide an artifact whose relevant exported entrypoint directly reaches the sparse reader, and retain the call evidence with the report.",
+        ));
+    }
+    if sparse_write && sparse_write_exports.is_empty() {
+        findings.push(error(
+            "CAP009",
+            "Sparse-writer import is not directly reachable from an exported function",
+            "The candidate imports `m.b`, but the direct-call graph does not connect that import to any exported function. An unused or dynamically reached import is not evidence that a contract entrypoint writes sparsely.",
+            "Provide an artifact whose relevant exported entrypoint directly reaches the sparse writer, and retain the call evidence with the report.",
+        ));
+    }
+    if (sparse_read || sparse_write) && !dynamic_exports.is_empty() {
+        findings.push(warning(
+            "CAP008",
+            "Dynamic dispatch limits CAP-0086 call-graph evidence",
+            &format!(
+                "Exported function(s) {} reach indirect or reference calls, so static host-import reachability is incomplete even where direct CAP-0086 paths are present.",
+                dynamic_exports.join(", ")
+            ),
+            "Remove dynamic dispatch from the compatibility-critical path or provide a separately verified complete call-target set.",
         ));
     }
 }
@@ -1734,6 +2333,9 @@ mod tests {
                 })
                 .collect(),
             user_types: BTreeMap::new(),
+            public_type_boundaries: Vec::new(),
+            type_references: Vec::new(),
+            export_call_evidence: BTreeMap::new(),
         }
     }
 
@@ -1764,6 +2366,17 @@ mod tests {
             source: artifact("1.0.0", &["upgrade"]),
             target: artifact("2.0.0", &["upgrade", "migrate"]),
             findings: Vec::new(),
+            public_impacts: Vec::new(),
+            evidence: build_evidence_coverage(
+                &ValidationContext {
+                    target_protocol_version: Some(27),
+                    protocol_source: ProtocolSource::OfflineAssertion,
+                    network_name: Some("testnet".into()),
+                    ..ValidationContext::default()
+                },
+                true,
+                true,
+            ),
             storage_schema_checked: true,
             schema_history_checked: true,
             schema_history_sha256: Some("11".repeat(32)),
@@ -2367,6 +2980,34 @@ mod tests {
     }
 
     #[test]
+    fn cap_0086_requires_export_reachability_and_flags_dynamic_dispatch() {
+        let mut target = artifact("2.0.0", &["account", "upgrade"]);
+        target
+            .host_imports
+            .insert(CAP_0086_SPARSE_READ_IMPORT.into());
+        let context = ValidationContext {
+            target_protocol_version: Some(28),
+            ..ValidationContext::default()
+        };
+
+        let mut findings = Vec::new();
+        check_cap_0086(&target, &context, &mut findings);
+        assert!(findings.iter().any(|finding| finding.code == "CAP007"));
+
+        target.export_call_evidence.insert(
+            "account".into(),
+            ExportCallEvidence {
+                host_imports: BTreeSet::from([CAP_0086_SPARSE_READ_IMPORT.into()]),
+                dynamic_dispatch_reachable: true,
+            },
+        );
+        findings.clear();
+        check_cap_0086(&target, &context, &mut findings);
+        assert!(!findings.iter().any(|finding| finding.code == "CAP007"));
+        assert!(findings.iter().any(|finding| finding.code == "CAP008"));
+    }
+
+    #[test]
     fn schema_history_accepts_an_exact_cumulative_record() {
         let mut source = artifact("1.0.0", &["upgrade"]);
         let mut target = artifact("2.0.0", &["upgrade"]);
@@ -2485,5 +3126,193 @@ mod tests {
         let mut findings = Vec::new();
         validate_schema_history(&source, &target, &history, &mut findings);
         assert!(findings.iter().any(|finding| finding.code == "HIS010"));
+    }
+
+    #[test]
+    fn export_call_evidence_separates_directly_reachable_host_functions() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "m" "c" (func $sparse))
+                (import "m" "a" (func $dense))
+                (func $sparse_wrapper call $sparse)
+                (func (export "read_sparse") call $sparse_wrapper)
+                (func (export "read_dense") call $dense)
+            )"#,
+        )
+        .unwrap();
+
+        let evidence = inspect_export_call_evidence(&wasm).unwrap();
+        assert_eq!(
+            evidence["read_sparse"].host_imports,
+            BTreeSet::from(["m.c".into()])
+        );
+        assert_eq!(
+            evidence["read_dense"].host_imports,
+            BTreeSet::from(["m.a".into()])
+        );
+        assert!(!evidence["read_sparse"].dynamic_dispatch_reachable);
+    }
+
+    #[test]
+    fn export_call_evidence_flags_dynamic_dispatch() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (type $callback (func))
+                (func $target)
+                (table 1 funcref)
+                (elem (i32.const 0) $target)
+                (func (export "dispatch")
+                    i32.const 0
+                    call_indirect (type $callback))
+            )"#,
+        )
+        .unwrap();
+
+        let evidence = inspect_export_call_evidence(&wasm).unwrap();
+        assert!(evidence["dispatch"].dynamic_dispatch_reachable);
+        assert!(evidence["dispatch"].host_imports.is_empty());
+    }
+
+    #[test]
+    fn changed_nested_type_traces_to_a_retained_public_boundary() {
+        let mut source = artifact("1.0.0", &["portfolio", "upgrade"]);
+        let mut target = artifact("2.0.0", &["portfolio", "upgrade"]);
+        source.user_types.insert(
+            "Balance".into(),
+            struct_entry("Balance", &[("amount", serde_json::json!("i128"))]),
+        );
+        target.user_types.insert(
+            "Balance".into(),
+            struct_entry("Balance", &[("amount", serde_json::json!("u64"))]),
+        );
+        for artifact in [&mut source, &mut target] {
+            artifact.public_type_boundaries.push(PublicTypeBoundary {
+                function: "portfolio".into(),
+                position: BoundaryPosition::Output,
+                index: 0,
+                label: None,
+                root_type: "Portfolio".into(),
+            });
+            artifact.type_references.extend([
+                TypeReference {
+                    owner_type: "Portfolio".into(),
+                    member: "position".into(),
+                    target_type: "Position".into(),
+                },
+                TypeReference {
+                    owner_type: "Position".into(),
+                    member: "balance".into(),
+                    target_type: "Balance".into(),
+                },
+            ]);
+            artifact.user_types.insert(
+                "Portfolio".into(),
+                struct_entry("Portfolio", &[("position", serde_json::json!("Position"))]),
+            );
+            artifact.user_types.insert(
+                "Position".into(),
+                struct_entry("Position", &[("balance", serde_json::json!("Balance"))]),
+            );
+        }
+
+        let impacts = trace_public_impacts(&source, &target);
+        assert_eq!(impacts.len(), 1);
+        assert_eq!(impacts[0].changed_type, "Balance");
+        assert_eq!(
+            impacts[0]
+                .steps
+                .iter()
+                .map(|step| step.member.as_str())
+                .collect::<Vec<_>>(),
+            ["position", "balance"]
+        );
+        assert_eq!(impacts[0].structural_reachability, EvidenceStatus::Fact);
+        assert_eq!(impacts[0].runtime_compatibility, EvidenceStatus::Unknown);
+    }
+
+    #[test]
+    fn public_impact_keeps_distinct_fields_that_reach_the_same_type() {
+        let mut source = artifact("1.0.0", &["portfolio", "upgrade"]);
+        let mut target = artifact("2.0.0", &["portfolio", "upgrade"]);
+        source.user_types.insert(
+            "Balance".into(),
+            struct_entry("Balance", &[("amount", serde_json::json!("i128"))]),
+        );
+        target.user_types.insert(
+            "Balance".into(),
+            struct_entry("Balance", &[("amount", serde_json::json!("u64"))]),
+        );
+        for artifact in [&mut source, &mut target] {
+            artifact.public_type_boundaries.push(PublicTypeBoundary {
+                function: "portfolio".into(),
+                position: BoundaryPosition::Output,
+                index: 0,
+                label: None,
+                root_type: "Portfolio".into(),
+            });
+            artifact.type_references.extend([
+                TypeReference {
+                    owner_type: "Portfolio".into(),
+                    member: "left".into(),
+                    target_type: "Balance".into(),
+                },
+                TypeReference {
+                    owner_type: "Portfolio".into(),
+                    member: "right".into(),
+                    target_type: "Balance".into(),
+                },
+            ]);
+            artifact.user_types.insert(
+                "Portfolio".into(),
+                struct_entry(
+                    "Portfolio",
+                    &[
+                        ("left", serde_json::json!("Balance")),
+                        ("right", serde_json::json!("Balance")),
+                    ],
+                ),
+            );
+        }
+
+        let impacts = trace_public_impacts(&source, &target);
+        assert_eq!(impacts.len(), 2);
+        assert_eq!(impacts[0].steps[0].member, "left");
+        assert_eq!(impacts[1].steps[0].member, "right");
+    }
+
+    #[test]
+    fn evidence_coverage_distinguishes_live_fact_from_offline_inference() {
+        let live = build_evidence_coverage(
+            &ValidationContext {
+                target_protocol_version: Some(28),
+                protocol_source: ProtocolSource::StellarCliNetworkInfo,
+                network_name: Some("testnet".into()),
+                network_id: Some("network-id".into()),
+                observed_at_unix_seconds: Some(1),
+                ..ValidationContext::default()
+            },
+            true,
+            true,
+        );
+        assert_eq!(live.target_network_protocol.status, EvidenceStatus::Fact);
+        assert_eq!(live.ledger_storage_coverage.status, EvidenceStatus::Unknown);
+
+        let offline = build_evidence_coverage(
+            &ValidationContext {
+                target_protocol_version: Some(28),
+                protocol_source: ProtocolSource::OfflineAssertion,
+                ..ValidationContext::default()
+            },
+            false,
+            false,
+        );
+        assert_eq!(
+            offline.target_network_protocol.status,
+            EvidenceStatus::Inference
+        );
+        assert_eq!(
+            offline.declared_storage_schema.status,
+            EvidenceStatus::Unknown
+        );
     }
 }
