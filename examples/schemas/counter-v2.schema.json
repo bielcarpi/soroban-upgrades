@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "schemaVersion": 2,
+  "contractVersion": "2.0.0",
+  "entries": [
+    {
+      "key": "Admin",
+      "durability": "instance",
+      "type": "Address"
+    },
+    {
+      "key": "Config",
+      "durability": "instance",
+      "type": "ConfigV2",
+      "migration": {
+        "strategy": "lazy_with_idempotent_eager_entrypoint",
+        "entrypoint": "migrate",
+        "notes": "Retain ConfigV1 in target WASM; convert once and set schema version 2."
+      }
+    },
+    {
+      "key": "SchemaVersion",
+      "durability": "instance",
+      "type": "u32"
+    }
+  ]
+}

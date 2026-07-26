@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "types": {
+    "ConfigV1": {
+      "fields": {
+        "count": {
+          "type": "u32",
+          "firstSeen": "1.0.0"
+        }
+      },
+      "reservedFields": []
+    },
+    "ConfigV2": {
+      "fields": {
+        "count": {
+          "type": "u32",
+          "firstSeen": "2.0.0"
+        },
+        "paused": {
+          "type": "bool",
+          "firstSeen": "2.0.0"
+        }
+      },
+      "reservedFields": []
+    }
+  }
+}
