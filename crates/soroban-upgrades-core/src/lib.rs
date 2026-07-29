@@ -207,6 +207,20 @@ pub struct ExportCallEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FunctionImport {
+    pub function_index: u32,
+    pub module: String,
+    pub name: String,
+}
+
+impl FunctionImport {
+    pub fn canonical_name(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub sha256: String,
@@ -510,13 +524,27 @@ struct FunctionBodyCalls {
 }
 
 fn read_host_imports(bytes: &[u8]) -> Result<BTreeSet<String>, Error> {
-    let mut imports = BTreeSet::new();
+    Ok(inspect_function_imports(bytes)?
+        .into_iter()
+        .map(|import| import.canonical_name())
+        .collect())
+}
+
+pub fn inspect_function_imports(bytes: &[u8]) -> Result<Vec<FunctionImport>, Error> {
+    let mut imports = Vec::new();
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let wasmparser::Payload::ImportSection(section) = payload? {
             for import in section.into_imports() {
                 let import = import?;
                 if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                    imports.insert(format!("{}.{}", import.module, import.name));
+                    let function_index = u32::try_from(imports.len()).map_err(|_| {
+                        Error::CallGraph("too many function imports to inspect".into())
+                    })?;
+                    imports.push(FunctionImport {
+                        function_index,
+                        module: import.module.to_owned(),
+                        name: import.name.to_owned(),
+                    });
                 }
             }
         }
@@ -3151,6 +3179,34 @@ mod tests {
             BTreeSet::from(["m.a".into()])
         );
         assert!(!evidence["read_sparse"].dynamic_dispatch_reachable);
+    }
+
+    #[test]
+    fn function_import_inspection_preserves_order_and_duplicates() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "m" "c" (func $first))
+                (import "m" "a" (func $dense))
+                (import "m" "c" (func $second))
+            )"#,
+        )
+        .unwrap();
+
+        let imports = inspect_function_imports(&wasm).unwrap();
+        assert_eq!(
+            imports
+                .iter()
+                .map(FunctionImport::canonical_name)
+                .collect::<Vec<_>>(),
+            ["m.c", "m.a", "m.c"]
+        );
+        assert_eq!(
+            imports
+                .iter()
+                .map(|import| import.function_index)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
     }
 
     #[test]
