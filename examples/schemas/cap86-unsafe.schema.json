@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "schemaVersion": 3,
+  "contractVersion": "3.0.0",
+  "entries": [
+    {
+      "key": "Account",
+      "durability": "persistent",
+      "type": "Account"
+    }
+  ]
+}

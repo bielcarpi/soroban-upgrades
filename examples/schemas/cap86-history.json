@@ -1,0 +1,26 @@
+{
+  "formatVersion": 1,
+  "types": {
+    "Account": {
+      "fields": {
+        "owner": {
+          "type": "address",
+          "firstSeen": "1.0.0"
+        },
+        "balance": {
+          "type": "i128",
+          "firstSeen": "1.0.0"
+        },
+        "status": {
+          "type": {
+            "option": {
+              "value_type": "u32"
+            }
+          },
+          "firstSeen": "2.0.0"
+        }
+      },
+      "reservedFields": []
+    }
+  }
+}
