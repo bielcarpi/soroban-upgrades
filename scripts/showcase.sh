@@ -42,7 +42,7 @@ task_cli="target/debug/soroban-upgrades"
 task_packages=(counter-v1 counter-v2 counter-unsafe cap86-v1 cap86-v2 cap86-unsafe)
 
 print_compact_result() {
-  sed -n -E '/^(PASS|BLOCKED|  errors:|  warnings:|  artifact:|  CAP-0086)/p' "$1"
+  sed -n -E '/^(PASS|BLOCKED|  errors:|  warnings:|  artifact:|  CAP-0086|  public impact:)/p' "$1"
 }
 
 run_expected_block() {
@@ -57,9 +57,9 @@ run_expected_block() {
   print_compact_result "${task_log}"
 }
 
-echo "Soroban Upgrades — executable upgrade-safety proof"
+echo "Soroban Upgrades: executable upgrade-safety proof"
 echo ""
-echo "[1/6] Build the CLI, run the engine tests, compile six contract fixtures"
+echo "[1/7] Build the CLI, run the engine tests, compile six contract fixtures"
 cargo build --quiet --package soroban-upgrades-cli
 if ! cargo test --workspace >"${task_tmp}/tests.log" 2>&1; then
   cat "${task_tmp}/tests.log" >&2
@@ -76,7 +76,7 @@ done
 echo "PASS ${task_test_count} tests; 6 compiled WASM fixtures"
 
 echo ""
-echo "[2/6] Accept a compatible v1 -> v2 migration"
+echo "[2/7] Accept a compatible v1 -> v2 migration"
 task_safe_log="${task_tmp}/safe.log"
 task_network_args=(--network testnet)
 if [[ "${task_mode}" == "offline" ]]; then
@@ -97,7 +97,7 @@ fi
 print_compact_result "${task_safe_log}"
 
 echo ""
-echo "[3/6] Reject an ABI, storage, version, and upgrade-path break"
+echo "[3/7] Reject an ABI, storage, version, and upgrade-path break"
 run_expected_block "unsafe-upgrade" "${task_cli}" validate \
   --from target/wasm32v1-none/release/counter_v1.wasm \
   --to target/wasm32v1-none/release/counter_unsafe.wasm \
@@ -109,7 +109,7 @@ run_expected_block "unsafe-upgrade" "${task_cli}" validate \
   --compact
 
 echo ""
-echo "[4/6] Refuse a false CAP-0086 claim"
+echo "[4/7] Refuse a false CAP-0086 claim and trace its public impact"
 echo "      Protocol 28 is asserted; the candidate still lacks sparse decoding."
 run_expected_block "cap-0086-gate" "${task_cli}" validate \
   --from target/wasm32v1-none/release/cap86_v1.wasm \
@@ -122,7 +122,18 @@ run_expected_block "cap-0086-gate" "${task_cli}" validate \
   --compact
 
 echo ""
-echo "[5/6] Reject semantic schema breaks even under protocol 28"
+echo "[5/7] Execute the independent Protocol-28 CAP-0086 runtime matrix"
+task_runtime_log="${task_tmp}/cap0086-runtime.log"
+if ! ./scripts/verify-cap0086-runtime.sh >"${task_runtime_log}" 2>&1; then
+  cat "${task_runtime_log}" >&2
+  exit 1
+fi
+echo "PASS dense/sparse reader and writer directions; two byte-identical clean guest builds"
+echo "     sparse writer with omitted field -> old dense reader: compatible"
+echo "     sparse writer with present field -> old dense reader: trapped"
+
+echo ""
+echo "[6/7] Reject semantic schema breaks even under protocol 28"
 echo "      Sparse decoding cannot make a rename, retype, or required field safe."
 run_expected_block "cap-0086-semantic-break" "${task_cli}" validate \
   --from target/wasm32v1-none/release/cap86_v2.wasm \
@@ -135,7 +146,7 @@ run_expected_block "cap-0086-semantic-break" "${task_cli}" validate \
   --compact
 
 echo ""
-echo "[6/6] Create and verify a canonical, non-signing release plan"
+echo "[7/7] Create and verify a canonical, non-signing release plan"
 task_plan="target/showcase-upgrade-plan.json"
 "${task_cli}" plan \
   --from target/wasm32v1-none/release/counter_v1.wasm \
@@ -158,4 +169,4 @@ echo "  contract: CAVRSELEZ6PAWEXGHPGNQ3VHI4LDT5QUA5MZWSMXYQLE7HACO6G3TUMJ"
 echo "  tx:       f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda"
 echo "  result:   state survived; v2 code and migrations verified"
 echo ""
-echo "SHOWCASE PASS — read-only analysis; no keys, signatures, uploads, or transactions."
+echo "SHOWCASE PASS: read-only analysis; no keys, signatures, uploads, or transactions."
