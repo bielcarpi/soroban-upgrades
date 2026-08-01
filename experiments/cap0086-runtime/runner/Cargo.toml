@@ -1,0 +1,15 @@
+[package]
+name = "cap0086-runtime-runner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde_json = "1.0"
+soroban-env-host = { version = "=28.0.1", features = ["testutils"] }
+soroban-upgrades-core = { path = "../../../crates/soroban-upgrades-core" }
+
+[dev-dependencies]
+wat = "1.244"
+
+[workspace]
