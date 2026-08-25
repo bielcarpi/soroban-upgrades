@@ -1,0 +1,133 @@
+name: Soroban upgrade safety gate
+description: Validate a compiled Soroban contract upgrade and write a JSON evidence report.
+author: Soroban Upgrades contributors
+
+inputs:
+  version:
+    description: Soroban Upgrades release version without the v prefix.
+    required: false
+    default: "1.0.0"
+  from:
+    description: Path to the deployed source WASM.
+    required: true
+  to:
+    description: Path to the candidate target WASM.
+    required: true
+  from-schema:
+    description: Path to the complete source storage schema.
+    required: true
+  to-schema:
+    description: Path to the complete target storage schema.
+    required: true
+  schema-history:
+    description: Path to the cumulative schema history.
+    required: true
+  policy:
+    description: Path to a policy file. The fail-closed default applies when empty.
+    required: false
+    default: ""
+  network:
+    description: Stellar CLI network name for live protocol evidence.
+    required: false
+    default: "testnet"
+  protocol-version:
+    description: Offline protocol assertion. Set this value to skip the live network query.
+    required: false
+    default: ""
+  report:
+    description: Path for the JSON validation report.
+    required: false
+    default: "soroban-upgrade-report.json"
+
+runs:
+  using: composite
+  steps:
+    - name: Install the attested release binary
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+          echo "Invalid Soroban Upgrades version: $INPUT_VERSION" >&2
+          exit 1
+        fi
+
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64) target="x86_64-unknown-linux-gnu" ;;
+          Linux/ARM64) target="aarch64-unknown-linux-gnu" ;;
+          macOS/X64) target="x86_64-apple-darwin" ;;
+          macOS/ARM64) target="aarch64-apple-darwin" ;;
+          Windows/X64) target="x86_64-pc-windows-msvc" ;;
+          *)
+            echo "Unsupported runner: ${RUNNER_OS}/${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+
+        task_dir="${RUNNER_TEMP}/soroban-upgrades-${INPUT_VERSION}"
+        mkdir -p "$task_dir/bin"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          archive="soroban-upgrades-cli-${target}.zip"
+        else
+          archive="soroban-upgrades-cli-${target}.tar.xz"
+        fi
+
+        gh release download "v${INPUT_VERSION}" \
+          --repo bielcarpi/soroban-upgrades \
+          --pattern "$archive" \
+          --dir "$task_dir"
+        gh attestation verify "$task_dir/$archive" \
+          --repo bielcarpi/soroban-upgrades
+
+        if [[ "$archive" == *.zip ]]; then
+          unzip -q "$task_dir/$archive" -d "$task_dir/bin"
+        else
+          tar -xJf "$task_dir/$archive" -C "$task_dir/bin"
+        fi
+        binary="$(find "$task_dir/bin" -type f \( -name soroban-upgrades -o -name soroban-upgrades.exe \) -print -quit)"
+        if [[ -z "$binary" ]]; then
+          echo "The release archive does not contain the CLI binary." >&2
+          exit 1
+        fi
+        echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+
+    - name: Validate the upgrade
+      shell: bash
+      env:
+        INPUT_FROM: ${{ inputs.from }}
+        INPUT_TO: ${{ inputs.to }}
+        INPUT_FROM_SCHEMA: ${{ inputs.from-schema }}
+        INPUT_TO_SCHEMA: ${{ inputs.to-schema }}
+        INPUT_SCHEMA_HISTORY: ${{ inputs.schema-history }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_NETWORK: ${{ inputs.network }}
+        INPUT_PROTOCOL_VERSION: ${{ inputs.protocol-version }}
+        INPUT_REPORT: ${{ inputs.report }}
+      run: |
+        set -euo pipefail
+        arguments=(
+          validate
+          --from "$INPUT_FROM"
+          --to "$INPUT_TO"
+          --from-schema "$INPUT_FROM_SCHEMA"
+          --to-schema "$INPUT_TO_SCHEMA"
+          --schema-history "$INPUT_SCHEMA_HISTORY"
+          --json
+        )
+        if [[ -n "$INPUT_POLICY" ]]; then
+          arguments+=(--policy "$INPUT_POLICY")
+        fi
+        if [[ -n "$INPUT_PROTOCOL_VERSION" ]]; then
+          arguments+=(--protocol-version "$INPUT_PROTOCOL_VERSION")
+        else
+          arguments+=(--network "$INPUT_NETWORK")
+        fi
+
+        mkdir -p "$(dirname "$INPUT_REPORT")"
+        soroban-upgrades "${arguments[@]}" > "$INPUT_REPORT"
+
+branding:
+  icon: shield
+  color: purple

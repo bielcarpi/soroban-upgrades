@@ -73,7 +73,7 @@ for task_package in "${task_packages[@]}"; do
     exit 1
   fi
 done
-echo "PASS ${task_test_count} tests; 6 compiled WASM fixtures"
+echo "PASS ${task_test_count} tests and 6 compiled WASM fixtures"
 
 echo ""
 echo "[2/7] Accept a compatible v1 -> v2 migration"
@@ -110,7 +110,7 @@ run_expected_block "unsafe-upgrade" "${task_cli}" validate \
 
 echo ""
 echo "[4/7] Refuse a false CAP-0086 claim and trace its public impact"
-echo "      Protocol 28 is asserted; the candidate still lacks sparse decoding."
+echo "      Protocol 28 is asserted. The candidate still lacks sparse decoding."
 run_expected_block "cap-0086-gate" "${task_cli}" validate \
   --from target/wasm32v1-none/release/cap86_v1.wasm \
   --to target/wasm32v1-none/release/cap86_v2.wasm \
@@ -128,7 +128,7 @@ if ! ./scripts/verify-cap0086-runtime.sh >"${task_runtime_log}" 2>&1; then
   cat "${task_runtime_log}" >&2
   exit 1
 fi
-echo "PASS dense/sparse reader and writer directions; two byte-identical clean guest builds"
+echo "PASS dense/sparse reader and writer directions with two byte-identical clean guest builds"
 echo "     sparse writer with omitted field -> old dense reader: compatible"
 echo "     sparse writer with present field -> old dense reader: trapped"
 
@@ -160,13 +160,18 @@ task_plan="target/showcase-upgrade-plan.json"
   --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4 \
   --source-identity deployer \
   --migration-entrypoint migrate \
-  --out "${task_plan}"
-"${task_cli}" verify-plan --plan "${task_plan}"
+  --migration-arg operator=deployer \
+  --invariant-program cargo \
+  --invariant-arg test \
+  --invariant-arg=--workspace \
+  --out "${task_plan}" \
+  --force
+"${task_cli}" verify-plan --plan "${task_plan}" --offline
 
 echo ""
 echo "Historical Testnet receipt"
 echo "  contract: CAVRSELEZ6PAWEXGHPGNQ3VHI4LDT5QUA5MZWSMXYQLE7HACO6G3TUMJ"
 echo "  tx:       f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda"
-echo "  result:   state survived; v2 code and migrations verified"
+echo "  result:   state survived. The v2 code and migrations were verified."
 echo ""
-echo "SHOWCASE PASS: read-only analysis; no keys, signatures, uploads, or transactions."
+echo "SHOWCASE PASS: read-only analysis with no keys, signatures, uploads, or transactions."

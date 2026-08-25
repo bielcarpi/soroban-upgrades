@@ -13,12 +13,21 @@ expect_validation_failure() {
   local task_name="$1"
   shift
   local task_log="${task_tmp}/${task_name}.log"
-  if "$@" >"${task_log}" 2>&1; then
+  set +e
+  "$@" >"${task_log}" 2>&1
+  local task_status=$?
+  set -e
+  if [[ ${task_status} -eq 0 ]]; then
     cat "${task_log}" >&2
     echo "${task_name} unexpectedly passed" >&2
     exit 1
   fi
-  if ! grep -q '^BLOCKED ' "${task_log}"; then
+  if [[ ${task_status} -ne 2 ]]; then
+    cat "${task_log}" >&2
+    echo "${task_name} returned ${task_status}. Expected blocked status 2." >&2
+    exit 1
+  fi
+  if ! rg --quiet '^BLOCKED ' "${task_log}"; then
     cat "${task_log}" >&2
     echo "${task_name} failed without a structured blocked verdict" >&2
     exit 1
@@ -26,9 +35,16 @@ expect_validation_failure() {
   sed -n -E '/^(BLOCKED|  errors:|  warnings:|  artifact:|  CAP-0086)/p' "${task_log}"
 }
 
+actionlint
+if rg --line-number 'uses: [^@]+@(main|master|v[0-9])' .github/workflows; then
+  echo "A workflow action is not pinned to a full commit SHA" >&2
+  exit 1
+fi
+
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
 
 stellar contract build --package counter-v1
 stellar contract build --package counter-v2
@@ -88,11 +104,22 @@ cargo run --quiet --package soroban-upgrades-cli -- plan \
   --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4 \
   --source-identity deployer \
   --migration-entrypoint migrate \
-  --out target/mvp-upgrade-plan.json
+  --migration-arg operator=deployer \
+  --invariant-program cargo \
+  --invariant-arg test \
+  --invariant-arg=--workspace \
+  --out target/release-upgrade-plan.json \
+  --force
 
 cargo run --quiet --package soroban-upgrades-cli -- verify-plan \
-  --plan target/mvp-upgrade-plan.json
+  --plan target/release-upgrade-plan.json \
+  --offline
 
 ./scripts/verify-cap0086-runtime.sh
 
-echo "MVP verification passed: compatible upgrade accepted, unsafe and CAP-0086-gated upgrades rejected, Protocol-28 runtime directions witnessed, and plan digest verified."
+cargo package --locked --allow-dirty --package soroban-upgrades-core
+# `paste` is an unmaintained build-only dependency in the Soroban fixture stack.
+# It is not part of the distributed CLI dependency graph.
+cargo audit --deny warnings --ignore RUSTSEC-2024-0436
+
+echo "Release verification passed: safe upgrade accepted, unsafe changes rejected, runtime directions witnessed, and release evidence verified."
