@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/CLI.md"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 authors.workspace = true
 
 [[bin]]
@@ -15,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-soroban-upgrades-core = { version = "0.1.0-alpha.1", path = "../soroban-upgrades-core" }
+soroban-upgrades-core = { version = "1.0.0", path = "../soroban-upgrades-core" }

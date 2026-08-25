@@ -4,7 +4,11 @@
   "requireUpgradeFunction": true,
   "forbidConstructor": false,
   "requireSemverIncrease": true,
+  "requireStorageSchema": true,
+  "requireSchemaHistory": true,
   "denyRemovedFunctions": true,
   "denyChangedFunctions": true,
+  "denyRemovedEvents": true,
+  "denyChangedEvents": true,
   "denyChangedUserTypes": true
 }

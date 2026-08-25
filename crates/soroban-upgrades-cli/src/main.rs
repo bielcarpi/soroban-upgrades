@@ -1,17 +1,18 @@
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use soroban_upgrades_core::{
-    create_plan, validate_with_history, verify_plan_digest, Artifact, BoundaryPosition,
-    EvidenceItem, EvidenceStatus, Policy, ProtocolSource, PublicImpact, SchemaHistory, Severity,
-    StorageSchema, UpgradePlan, ValidationContext, ValidationReport, MAX_ARTIFACT_SIZE_BYTES,
+    create_plan_with_paths, validate_with_history, verify_plan_digest, Artifact, BoundaryPosition,
+    EvidenceItem, EvidenceStatus, InvariantCheck, MigrationCall, PlanInputPaths, PlanOperations,
+    PlanStatus, Policy, ProtocolSource, PublicImpact, SchemaHistory, Severity, StorageSchema,
+    UpgradePlan, ValidationContext, ValidationReport, MAX_ARTIFACT_SIZE_BYTES,
 };
 use std::{
-    collections::BTreeSet,
-    fs::{self, File},
-    io::Read,
+    collections::{BTreeMap, BTreeSet},
+    fs::{File, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
+    process::{Command as ProcessCommand, ExitCode},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -37,16 +38,26 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print a JSON Schema for a supported input or output format.
+    Schema {
+        #[arg(value_enum)]
+        kind: SchemaKind,
+    },
     /// Compare source and target WASM files and fail on unsafe changes.
+    #[command(group(
+        ArgGroup::new("protocol_evidence")
+            .required(true)
+            .args(["network", "protocol_version"])
+    ))]
     Validate {
         #[arg(long)]
         from: PathBuf,
         #[arg(long)]
         to: PathBuf,
-        #[arg(long, requires = "to_schema")]
-        from_schema: Option<PathBuf>,
-        #[arg(long, requires = "from_schema")]
-        to_schema: Option<PathBuf>,
+        #[arg(long)]
+        from_schema: PathBuf,
+        #[arg(long)]
+        to_schema: PathBuf,
         #[arg(long)]
         json: bool,
         /// Print a demo- and CI-friendly verdict instead of the full finding details.
@@ -56,14 +67,14 @@ enum Command {
         #[arg(long)]
         policy: Option<PathBuf>,
         /// Network to query live with `stellar network info`.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "protocol_version")]
         network: Option<String>,
         /// Offline protocol assertion; skips the live network query.
         #[arg(long)]
         protocol_version: Option<u32>,
         /// Cumulative field lifecycle and reserved-name manifest.
         #[arg(long)]
-        schema_history: Option<PathBuf>,
+        schema_history: PathBuf,
     },
     /// Emit a deterministic, reviewable execution plan. Refuses unsafe upgrades.
     Plan {
@@ -71,10 +82,10 @@ enum Command {
         from: PathBuf,
         #[arg(long)]
         to: PathBuf,
-        #[arg(long, requires = "to_schema")]
-        from_schema: Option<PathBuf>,
-        #[arg(long, requires = "from_schema")]
-        to_schema: Option<PathBuf>,
+        #[arg(long)]
+        from_schema: PathBuf,
+        #[arg(long)]
+        to_schema: PathBuf,
         #[arg(long)]
         network: String,
         #[arg(long)]
@@ -83,6 +94,19 @@ enum Command {
         source_identity: String,
         #[arg(long)]
         migration_entrypoint: Option<String>,
+        /// Migration argument in NAME=VALUE form. Repeat this option for each argument.
+        #[arg(
+            long = "migration-arg",
+            value_name = "NAME=VALUE",
+            requires = "migration_entrypoint"
+        )]
+        migration_args: Vec<String>,
+        /// Program that verifies application invariants after the upgrade.
+        #[arg(long)]
+        invariant_program: String,
+        /// Argument for the invariant program. Repeat this option for each argument.
+        #[arg(long = "invariant-arg", value_name = "VALUE")]
+        invariant_args: Vec<String>,
         /// Optional version-controlled compatibility policy. Defaults fail closed.
         #[arg(long)]
         policy: Option<PathBuf>,
@@ -95,16 +119,42 @@ enum Command {
         /// Write the plan to a file instead of standard output.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Replace an existing output file.
+        #[arg(long, requires = "out")]
+        force: bool,
     },
-    /// Verify that a saved plan still matches its content-addressed digest.
+    /// Verify the plan, its local artifacts, and its current network evidence.
     VerifyPlan {
         #[arg(long)]
         plan: PathBuf,
+        /// Skip the live network and deployed-contract checks.
+        #[arg(long)]
+        offline: bool,
     },
 }
 
-fn main() -> Result<()> {
-    match Cli::parse().command {
+#[derive(Clone, Debug, ValueEnum)]
+enum SchemaKind {
+    Artifact,
+    Policy,
+    Storage,
+    History,
+    Report,
+    Plan,
+}
+
+fn main() -> ExitCode {
+    match run(Cli::parse()) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("Error: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<ExitCode> {
+    match cli.command {
         Command::Inspect { wasm, json } => {
             let artifact = load_artifact(&wasm)?;
             if json {
@@ -112,6 +162,19 @@ fn main() -> Result<()> {
             } else {
                 print_artifact(&wasm, &artifact);
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Schema { kind } => {
+            let schema = match kind {
+                SchemaKind::Artifact => schemars::schema_for!(Artifact),
+                SchemaKind::Policy => schemars::schema_for!(Policy),
+                SchemaKind::Storage => schemars::schema_for!(StorageSchema),
+                SchemaKind::History => schemars::schema_for!(SchemaHistory),
+                SchemaKind::Report => schemars::schema_for!(ValidationReport),
+                SchemaKind::Plan => schemars::schema_for!(UpgradePlan),
+            };
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+            Ok(ExitCode::SUCCESS)
         }
         Command::Validate {
             from,
@@ -129,11 +192,11 @@ fn main() -> Result<()> {
             let report = load_report(
                 &from,
                 &to,
-                from_schema.as_deref(),
-                to_schema.as_deref(),
+                Some(&from_schema),
+                Some(&to_schema),
                 policy.as_deref(),
                 &context,
-                schema_history.as_deref(),
+                Some(&schema_history),
             )?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -142,9 +205,11 @@ fn main() -> Result<()> {
             } else {
                 print_report(&report);
             }
-            if !report.safe {
-                bail!("upgrade validation failed");
-            }
+            Ok(if report.safe {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
+            })
         }
         Command::Plan {
             from,
@@ -155,54 +220,113 @@ fn main() -> Result<()> {
             contract_id,
             source_identity,
             migration_entrypoint,
+            migration_args,
+            invariant_program,
+            invariant_args,
             policy,
             protocol_version,
             schema_history,
             out,
+            force,
         } => {
             let context = resolve_validation_context(Some(&network), protocol_version)?;
             let report = load_report(
                 &from,
                 &to,
-                from_schema.as_deref(),
-                to_schema.as_deref(),
+                Some(&from_schema),
+                Some(&to_schema),
                 policy.as_deref(),
                 &context,
                 Some(&schema_history),
             )?;
             if !report.safe {
                 print_report(&report);
-                bail!("refusing to create a plan for an unsafe upgrade");
+                return Ok(ExitCode::from(2));
             }
-            let plan = create_plan(
+            if protocol_version.is_none() {
+                make_sure_current_contract_matches(&network, &contract_id, &report.source.sha256)?;
+            }
+            let inputs = PlanInputPaths {
+                source_wasm: path_text(&from)?.into(),
+                target_wasm: path_text(&to)?.into(),
+                source_schema: path_text(&from_schema)?.into(),
+                target_schema: path_text(&to_schema)?.into(),
+                schema_history: path_text(&schema_history)?.into(),
+                policy: policy
+                    .as_deref()
+                    .map(path_text)
+                    .transpose()?
+                    .map(str::to_owned),
+            };
+            let migration = if let Some(entrypoint) = migration_entrypoint {
+                Some(MigrationCall {
+                    entrypoint,
+                    arguments: parse_named_arguments(&migration_args)?,
+                })
+            } else {
+                None
+            };
+            let plan = create_plan_with_paths(
                 report,
                 &network,
                 &contract_id,
                 &source_identity,
-                &to.to_string_lossy(),
-                migration_entrypoint.as_deref(),
+                inputs,
+                PlanOperations {
+                    migration,
+                    invariant_check: InvariantCheck {
+                        program: invariant_program,
+                        arguments: invariant_args,
+                    },
+                },
             )?;
             let mut json = serde_json::to_vec_pretty(&plan)?;
             json.push(b'\n');
             if let Some(out) = out {
-                fs::write(&out, json).with_context(|| format!("writing {}", out.display()))?;
+                write_output(&out, &json, force)?;
                 println!("Plan written: {}", out.display());
                 println!("Plan SHA-256: {}", plan.plan_sha256);
+                println!("Plan status: {}", plan_status_label(&plan.status));
             } else {
                 println!("{}", String::from_utf8(json)?);
             }
+            Ok(ExitCode::SUCCESS)
         }
-        Command::VerifyPlan { plan } => {
+        Command::VerifyPlan { plan, offline } => {
             let bytes = read_bounded(&plan, MAX_JSON_INPUT_SIZE_BYTES, "JSON plan")?;
             let plan = UpgradePlan::from_json(&bytes)
                 .with_context(|| format!("parsing {}", plan.display()))?;
             if !verify_plan_digest(&plan)? {
                 bail!("upgrade plan digest mismatch");
             }
-            println!("Plan digest verified: {}", plan.plan_sha256);
+            make_sure_plan_artifacts_match(&plan)?;
+            make_sure_plan_declarations_match(&plan)?;
+            if offline {
+                println!("Plan structure, digest, and local artifacts verified.");
+                println!("Network evidence not checked: offline mode.");
+            } else {
+                if plan.status != PlanStatus::ReviewReady {
+                    bail!("plan is an offline draft. Create a new plan with live network evidence");
+                }
+                make_sure_plan_network_matches(&plan)?;
+                make_sure_current_contract_matches(
+                    &plan.network,
+                    &plan.contract_id,
+                    &plan.source_wasm_sha256,
+                )?;
+                println!("Plan, local artifacts, network, and current executable verified.");
+            }
+            println!("Plan SHA-256: {}", plan.plan_sha256);
+            Ok(ExitCode::SUCCESS)
         }
     }
-    Ok(())
+}
+
+fn plan_status_label(status: &PlanStatus) -> &'static str {
+    match status {
+        PlanStatus::OfflineDraft => "offline draft",
+        PlanStatus::ReviewReady => "ready for signer review",
+    }
 }
 
 fn load_artifact(path: &Path) -> Result<Artifact> {
@@ -246,6 +370,172 @@ fn read_bounded(path: &Path, limit: usize, kind: &str) -> Result<Vec<u8>> {
         );
     }
     Ok(bytes)
+}
+
+fn path_text(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("path is not valid UTF-8: {}", path.display()))
+}
+
+fn parse_named_arguments(values: &[String]) -> Result<BTreeMap<String, String>> {
+    let mut arguments = BTreeMap::new();
+    for value in values {
+        let (name, argument) = value.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("migration argument `{value}` must use NAME=VALUE form")
+        })?;
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            bail!("migration argument name `{name}` is invalid");
+        }
+        if arguments.insert(name.into(), argument.into()).is_some() {
+            bail!("migration argument `{name}` was supplied more than once");
+        }
+    }
+    Ok(arguments)
+}
+
+fn write_output(path: &Path, bytes: &[u8], force: bool) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if force {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(path).with_context(|| {
+        if force {
+            format!("opening {} for replacement", path.display())
+        } else {
+            format!(
+                "creating {}. Use --force to replace an existing file",
+                path.display()
+            )
+        }
+    })?;
+    file.write_all(bytes)
+        .with_context(|| format!("writing {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("syncing {}", path.display()))?;
+    Ok(())
+}
+
+fn make_sure_plan_artifacts_match(plan: &UpgradePlan) -> Result<()> {
+    for (label, path, expected_hash, expected_artifact) in [
+        (
+            "source",
+            Path::new(&plan.inputs.source_wasm),
+            &plan.source_wasm_sha256,
+            &plan.validation.source,
+        ),
+        (
+            "target",
+            Path::new(&plan.inputs.target_wasm),
+            &plan.target_wasm_sha256,
+            &plan.validation.target,
+        ),
+    ] {
+        let artifact = load_artifact(path)?;
+        if artifact.sha256 != *expected_hash {
+            bail!(
+                "{label} artifact {} hashes to {}, but the plan requires {}",
+                path.display(),
+                artifact.sha256,
+                expected_hash
+            );
+        }
+        if artifact != *expected_artifact {
+            bail!(
+                "{label} artifact {} does not match the parsed artifact evidence in the plan",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn make_sure_plan_declarations_match(plan: &UpgradePlan) -> Result<()> {
+    let source_schema = load_schema(Path::new(&plan.inputs.source_schema))?;
+    let target_schema = load_schema(Path::new(&plan.inputs.target_schema))?;
+    let history = load_schema_history(Some(Path::new(&plan.inputs.schema_history)))?
+        .context("plan schema history path is missing")?;
+    let policy_path = plan.inputs.policy.as_deref().map(Path::new);
+    let policy = load_policy(policy_path)?;
+
+    if plan.validation.source_schema.as_ref() != Some(&source_schema) {
+        bail!("source schema file does not match the evidence in the plan");
+    }
+    if plan.validation.target_schema.as_ref() != Some(&target_schema) {
+        bail!("target schema file does not match the evidence in the plan");
+    }
+    if plan.validation.schema_history.as_ref() != Some(&history) {
+        bail!("schema history file does not match the evidence in the plan");
+    }
+    if plan.validation.policy != policy {
+        bail!("policy file does not match the evidence in the plan");
+    }
+    Ok(())
+}
+
+fn make_sure_plan_network_matches(plan: &UpgradePlan) -> Result<()> {
+    let current = resolve_live_network(&plan.network)?;
+    let planned = &plan.validation.context;
+    if current.network_id != planned.network_id
+        || current.network_passphrase != planned.network_passphrase
+        || current.target_protocol_version != planned.target_protocol_version
+    {
+        bail!(
+            "live network identity or protocol changed after plan creation. Create and review a new plan"
+        );
+    }
+    Ok(())
+}
+
+fn make_sure_current_contract_matches(
+    network: &str,
+    contract_id: &str,
+    expected_sha256: &str,
+) -> Result<()> {
+    let artifact = fetch_contract_artifact(network, contract_id)?;
+    if artifact.sha256 != expected_sha256 {
+        bail!(
+            "contract {contract_id} on `{network}` runs {}, but the source artifact is {}",
+            artifact.sha256,
+            expected_sha256
+        );
+    }
+    Ok(())
+}
+
+fn fetch_contract_artifact(network: &str, contract_id: &str) -> Result<Artifact> {
+    let output = ProcessCommand::new("stellar")
+        .args([
+            "contract",
+            "fetch",
+            "--id",
+            contract_id,
+            "--network",
+            network,
+        ])
+        .output()
+        .with_context(|| {
+            "running `stellar contract fetch`. Install Stellar CLI or use an offline plan"
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        bail!(
+            "failed to fetch contract {contract_id} from `{network}`: {}",
+            if detail.is_empty() {
+                format!("stellar exited with {}", output.status)
+            } else {
+                detail
+            }
+        );
+    }
+    Artifact::from_wasm(&output.stdout)
+        .with_context(|| format!("inspecting contract {contract_id} fetched from `{network}`"))
 }
 
 fn load_report(
@@ -304,7 +594,7 @@ fn resolve_live_network(network: &str) -> Result<ValidationContext> {
         .args(["network", "info", "--network", network, "--output", "json"])
         .output()
         .with_context(|| {
-            "running `stellar network info`; install Stellar CLI or use --protocol-version for an explicit offline assertion"
+            "running `stellar network info`. Install Stellar CLI or use --protocol-version for an explicit offline assertion"
         })?;
 
     if !output.status.success() {
@@ -349,6 +639,10 @@ fn print_artifact(path: &Path, artifact: &Artifact) {
     println!("Artifact: {}", path.display());
     println!("SHA-256: {}", artifact.sha256);
     println!("Size: {} bytes", artifact.size_bytes);
+    println!(
+        "Host interface: protocol {} prerelease {}",
+        artifact.env_protocol_version, artifact.env_pre_release
+    );
     println!("Version: {}", artifact.version().unwrap_or("missing"));
     println!("Upgrade entrypoint: {}", artifact.has_function("upgrade"));
     println!("Constructor: {}", artifact.has_function("__constructor"));
@@ -356,6 +650,15 @@ fn print_artifact(path: &Path, artifact: &Artifact) {
         "Functions: {}",
         artifact
             .functions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "Events: {}",
+        artifact
+            .events
             .keys()
             .cloned()
             .collect::<Vec<_>>()
@@ -383,13 +686,15 @@ fn print_artifact(path: &Path, artifact: &Artifact) {
                 .join(", ")
         };
         println!(
-            "  {entrypoint}: {imports}; dynamic dispatch reachable: {}",
+            "  {entrypoint}: {imports}. Dynamic dispatch reachable: {}",
             evidence.dynamic_dispatch_reachable
         );
     }
 }
 
 fn print_report(report: &ValidationReport) {
+    println!("Report format: {}", report.format_version);
+    println!("Validator version: {}", report.tool_version);
     println!("Upgrade safe: {}", report.safe);
     println!(
         "Version: {} -> {}",
@@ -438,7 +743,7 @@ fn print_report(report: &ValidationReport) {
         for impact in &report.public_impacts {
             println!("  {}", format_public_impact(impact));
             println!(
-                "    structural reachability: {}; runtime compatibility: {}",
+                "    structural reachability: {}. Runtime compatibility: {}",
                 evidence_status_label(&impact.structural_reachability),
                 evidence_status_label(&impact.runtime_compatibility)
             );

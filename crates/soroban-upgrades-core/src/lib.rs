@@ -3,6 +3,7 @@
 //! The crate inspects the metadata and contract specification embedded in
 //! Soroban WASM binaries. It never signs or submits a transaction.
 
+use schemars::JsonSchema;
 use semver::Version;
 use serde::{
     de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor},
@@ -15,19 +16,23 @@ use std::{
     io::Cursor,
 };
 use stellar_xdr::{
-    Error as XdrError, Limited, Limits, ReadXdr, ScMetaEntry, ScMetaV0, ScSpecEntry, ScSpecTypeDef,
-    ScSpecUdtUnionCaseV0,
+    Error as XdrError, Limited, Limits, ReadXdr, ScEnvMetaEntry, ScMetaEntry, ScMetaV0,
+    ScSpecEntry, ScSpecTypeDef, ScSpecUdtUnionCaseV0,
 };
 
 const SPEC_XDR_DEPTH_LIMIT: u32 = 500;
 pub const MAX_ARTIFACT_SIZE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PUBLIC_IMPACT_DEPTH: usize = 64;
+const MAX_PUBLIC_IMPACT_PATHS: usize = 256;
+const MAX_PUBLIC_IMPACT_STEPS: usize = 10_000;
 const CAP_0086_PROTOCOL: u32 = 28;
 const CAP_0086_SPARSE_WRITE_IMPORT: &str = "m.b";
 const CAP_0086_SPARSE_READ_IMPORT: &str = "m.c";
+const UPDATE_CURRENT_CONTRACT_WASM_IMPORT: &str = "l.6";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("WASM artifact is {size_bytes} bytes; the parser limit is {limit_bytes} bytes")]
+    #[error("WASM artifact is {size_bytes} bytes. The parser limit is {limit_bytes} bytes")]
     ArtifactTooLarge {
         size_bytes: usize,
         limit_bytes: usize,
@@ -36,8 +41,18 @@ pub enum Error {
     Spec(#[from] soroban_spec::read::FromWasmError),
     #[error("expected exactly one contractspecv0 section, found {0}")]
     ContractSpecSectionCount(usize),
+    #[error("expected exactly one contractenvmetav0 section, found {0}")]
+    ContractEnvMetaSectionCount(usize),
+    #[error("expected exactly one environment interface version, found {0}")]
+    ContractEnvVersionCount(usize),
     #[error("contract specification contains duplicate {kind} name {name:?}")]
     DuplicateSpecName { kind: &'static str, name: String },
+    #[error("contract specification {kind} {owner:?} contains duplicate member {name:?}")]
+    DuplicateSpecMember {
+        kind: &'static str,
+        owner: String,
+        name: String,
+    },
     #[error("contract metadata contains duplicate key {0:?}")]
     DuplicateMetadataKey(String),
     #[error("invalid WASM binary: {0}")]
@@ -48,7 +63,7 @@ pub enum Error {
     Xdr(#[from] XdrError),
     #[error("invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("invalid contract ID {0:?}; expected a checksummed Stellar C... strkey")]
+    #[error("invalid contract ID {0:?}. Expected a checksummed Stellar C... strkey")]
     InvalidContractId(String),
     #[error("invalid upgrade plan: {0}")]
     Plan(String),
@@ -148,7 +163,7 @@ where
     Ok(serde_json::from_slice(bytes)?)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Info,
@@ -156,7 +171,7 @@ pub enum Severity {
     Error,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Finding {
     pub code: String,
@@ -166,7 +181,7 @@ pub struct Finding {
     pub remediation: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceEntry {
     pub kind: String,
@@ -174,14 +189,16 @@ pub struct InterfaceEntry {
     pub canonical: serde_json::Value,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BoundaryPosition {
     Input,
     Output,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublicTypeBoundary {
     pub function: String,
@@ -191,7 +208,7 @@ pub struct PublicTypeBoundary {
     pub root_type: String,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TypeReference {
     pub owner_type: String,
@@ -199,14 +216,14 @@ pub struct TypeReference {
     pub target_type: String,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExportCallEvidence {
     pub host_imports: BTreeSet<String>,
     pub dynamic_dispatch_reachable: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FunctionImport {
     pub function_index: u32,
@@ -220,14 +237,18 @@ impl FunctionImport {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Artifact {
+    pub format_version: u32,
     pub sha256: String,
     pub size_bytes: usize,
+    pub env_protocol_version: u32,
+    pub env_pre_release: u32,
     pub metadata: BTreeMap<String, String>,
     pub host_imports: BTreeSet<String>,
     pub functions: BTreeMap<String, InterfaceEntry>,
+    pub events: BTreeMap<String, InterfaceEntry>,
     pub user_types: BTreeMap<String, InterfaceEntry>,
     pub public_type_boundaries: Vec<PublicTypeBoundary>,
     pub type_references: Vec<TypeReference>,
@@ -242,13 +263,16 @@ impl Artifact {
                 limit_bytes: MAX_ARTIFACT_SIZE_BYTES,
             });
         }
+        wasmparser::Validator::new().validate_all(bytes)?;
         let sha256 = hex::encode(Sha256::digest(bytes));
         require_single_contract_spec_section(bytes)?;
+        let (env_protocol_version, env_pre_release) = read_contract_env_metadata(bytes)?;
         let spec = soroban_spec::read::from_wasm(bytes)?;
         let metadata = read_contract_metadata(bytes)?;
         let host_imports = read_host_imports(bytes)?;
         let export_call_evidence = inspect_export_call_evidence(bytes)?;
         let mut functions = BTreeMap::new();
+        let mut events = BTreeMap::new();
         let mut user_types = BTreeMap::new();
         let mut public_type_boundaries = BTreeSet::new();
         let mut type_references = BTreeSet::new();
@@ -258,6 +282,14 @@ impl Artifact {
             match entry {
                 ScSpecEntry::FunctionV0(function) => {
                     let name = function.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "function",
+                        &name,
+                        function
+                            .inputs
+                            .iter()
+                            .map(|input| input.name.to_utf8_string_lossy()),
+                    )?;
                     for (index, input) in function.inputs.iter().enumerate() {
                         let mut referenced = BTreeSet::new();
                         collect_udt_names(&input.type_, &mut referenced);
@@ -303,6 +335,14 @@ impl Artifact {
                 }
                 ScSpecEntry::UdtStructV0(value) => {
                     let owner_type = value.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "struct",
+                        &owner_type,
+                        value
+                            .fields
+                            .iter()
+                            .map(|field| field.name.to_utf8_string_lossy()),
+                    )?;
                     for field in value.fields.iter() {
                         let mut referenced = BTreeSet::new();
                         collect_udt_names(&field.type_, &mut referenced);
@@ -318,6 +358,14 @@ impl Artifact {
                 }
                 ScSpecEntry::UdtUnionV0(value) => {
                     let owner_type = value.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "union",
+                        &owner_type,
+                        value.cases.iter().map(|case| match case {
+                            ScSpecUdtUnionCaseV0::VoidV0(case) => case.name.to_utf8_string_lossy(),
+                            ScSpecUdtUnionCaseV0::TupleV0(case) => case.name.to_utf8_string_lossy(),
+                        }),
+                    )?;
                     for case in value.cases.iter() {
                         if let ScSpecUdtUnionCaseV0::TupleV0(tuple) = case {
                             let case_name = tuple.name.to_utf8_string_lossy();
@@ -336,28 +384,70 @@ impl Artifact {
                     }
                     insert_user_type(&mut user_types, "union", owner_type, canonical)?;
                 }
-                ScSpecEntry::UdtEnumV0(value) => insert_user_type(
-                    &mut user_types,
-                    "enum",
-                    value.name.to_utf8_string_lossy(),
-                    canonical,
-                )?,
-                ScSpecEntry::UdtErrorEnumV0(value) => insert_user_type(
-                    &mut user_types,
-                    "error_enum",
-                    value.name.to_utf8_string_lossy(),
-                    canonical,
-                )?,
-                ScSpecEntry::EventV0(_) => {}
+                ScSpecEntry::UdtEnumV0(value) => {
+                    let name = value.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "enum",
+                        &name,
+                        value
+                            .cases
+                            .iter()
+                            .map(|case| case.name.to_utf8_string_lossy()),
+                    )?;
+                    insert_user_type(&mut user_types, "enum", name, canonical)?;
+                }
+                ScSpecEntry::UdtErrorEnumV0(value) => {
+                    let name = value.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "error enum",
+                        &name,
+                        value
+                            .cases
+                            .iter()
+                            .map(|case| case.name.to_utf8_string_lossy()),
+                    )?;
+                    insert_user_type(&mut user_types, "error_enum", name, canonical)?;
+                }
+                ScSpecEntry::EventV0(value) => {
+                    let name = value.name.to_utf8_string_lossy();
+                    ensure_unique_spec_members(
+                        "event",
+                        &name,
+                        value
+                            .params
+                            .iter()
+                            .map(|param| param.name.to_utf8_string_lossy()),
+                    )?;
+                    if events
+                        .insert(
+                            name.clone(),
+                            InterfaceEntry {
+                                kind: "event".into(),
+                                name: name.clone(),
+                                canonical,
+                            },
+                        )
+                        .is_some()
+                    {
+                        return Err(Error::DuplicateSpecName {
+                            kind: "event",
+                            name,
+                        });
+                    }
+                }
             }
         }
 
         Ok(Self {
+            format_version: 1,
             sha256,
             size_bytes: bytes.len(),
+            env_protocol_version,
+            env_pre_release,
             metadata,
             host_imports,
             functions,
+            events,
             user_types,
             public_type_boundaries: public_type_boundaries.into_iter().collect(),
             type_references: type_references.into_iter().collect(),
@@ -464,6 +554,24 @@ fn strip_documentation(value: &mut serde_json::Value) {
     }
 }
 
+fn ensure_unique_spec_members(
+    kind: &'static str,
+    owner: &str,
+    names: impl IntoIterator<Item = String>,
+) -> Result<(), Error> {
+    let mut unique = BTreeSet::new();
+    for name in names {
+        if !unique.insert(name.clone()) {
+            return Err(Error::DuplicateSpecMember {
+                kind,
+                owner: owner.into(),
+                name,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn insert_user_type(
     destination: &mut BTreeMap<String, InterfaceEntry>,
     kind: &str,
@@ -515,6 +623,31 @@ fn read_contract_metadata(bytes: &[u8]) -> Result<BTreeMap<String, String>, Erro
         }
     }
     Ok(metadata)
+}
+
+fn read_contract_env_metadata(bytes: &[u8]) -> Result<(u32, u32), Error> {
+    let mut raw = Vec::new();
+    let mut section_count = 0;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CustomSection(section) = payload? {
+            if section.name() == "contractenvmetav0" {
+                section_count += 1;
+                raw.extend_from_slice(section.data());
+            }
+        }
+    }
+    if section_count != 1 {
+        return Err(Error::ContractEnvMetaSectionCount(section_count));
+    }
+
+    let cursor = Cursor::new(raw);
+    let mut reader = Limited::new(cursor, Limits::depth(SPEC_XDR_DEPTH_LIMIT));
+    let entries = ScEnvMetaEntry::read_xdr_iter(&mut reader).collect::<Result<Vec<_>, _>>()?;
+    if entries.len() != 1 {
+        return Err(Error::ContractEnvVersionCount(entries.len()));
+    }
+    let ScEnvMetaEntry::ScEnvMetaKindInterfaceVersion(version) = &entries[0];
+    Ok((version.protocol, version.pre_release))
 }
 
 #[derive(Default)]
@@ -628,37 +761,32 @@ fn collect_export_call_evidence(
     visited: &mut BTreeSet<u32>,
     evidence: &mut ExportCallEvidence,
 ) -> Result<(), Error> {
-    if function_index < imported_function_count {
-        let import = function_imports
-            .get(function_index as usize)
-            .ok_or_else(|| Error::CallGraph("function import index is out of range".into()))?;
-        evidence.host_imports.insert(import.clone());
-        return Ok(());
-    }
-    if !visited.insert(function_index) {
-        return Ok(());
-    }
+    let mut pending = vec![function_index];
+    while let Some(current) = pending.pop() {
+        if current < imported_function_count {
+            let import = function_imports
+                .get(current as usize)
+                .ok_or_else(|| Error::CallGraph("function import index is out of range".into()))?;
+            evidence.host_imports.insert(import.clone());
+            continue;
+        }
+        if !visited.insert(current) {
+            continue;
+        }
 
-    let body_index = usize::try_from(function_index - imported_function_count)
-        .map_err(|_| Error::CallGraph("function body index does not fit this platform".into()))?;
-    let body = function_bodies
-        .get(body_index)
-        .ok_or_else(|| Error::CallGraph("function body index is out of range".into()))?;
-    evidence.dynamic_dispatch_reachable |= body.has_dynamic_dispatch;
-    for called in &body.direct_calls {
-        collect_export_call_evidence(
-            *called,
-            imported_function_count,
-            function_imports,
-            function_bodies,
-            visited,
-            evidence,
-        )?;
+        let body_index = usize::try_from(current - imported_function_count).map_err(|_| {
+            Error::CallGraph("function body index does not fit this platform".into())
+        })?;
+        let body = function_bodies
+            .get(body_index)
+            .ok_or_else(|| Error::CallGraph("function body index is out of range".into()))?;
+        evidence.dynamic_dispatch_reachable |= body.has_dynamic_dispatch;
+        pending.extend(body.direct_calls.iter().rev().copied());
     }
     Ok(())
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolSource {
     #[default]
@@ -667,7 +795,7 @@ pub enum ProtocolSource {
     StellarCliNetworkInfo,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ValidationContext {
     pub target_protocol_version: Option<u32>,
@@ -680,7 +808,7 @@ pub struct ValidationContext {
     pub observed_at_unix_seconds: Option<u64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Policy {
     pub format_version: u32,
@@ -688,8 +816,12 @@ pub struct Policy {
     pub require_upgrade_function: bool,
     pub forbid_constructor: bool,
     pub require_semver_increase: bool,
+    pub require_storage_schema: bool,
+    pub require_schema_history: bool,
     pub deny_removed_functions: bool,
     pub deny_changed_functions: bool,
+    pub deny_removed_events: bool,
+    pub deny_changed_events: bool,
     pub deny_changed_user_types: bool,
 }
 
@@ -701,8 +833,12 @@ impl Default for Policy {
             require_upgrade_function: true,
             forbid_constructor: false,
             require_semver_increase: true,
+            require_storage_schema: true,
+            require_schema_history: true,
             deny_removed_functions: true,
             deny_changed_functions: true,
+            deny_removed_events: true,
+            deny_changed_events: true,
             deny_changed_user_types: true,
         }
     }
@@ -714,7 +850,7 @@ impl Policy {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Migration {
     pub strategy: String,
@@ -722,7 +858,7 @@ pub struct Migration {
     pub notes: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Durability {
     Instance,
@@ -730,7 +866,7 @@ pub enum Durability {
     Temporary,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StorageEntry {
     pub key: String,
@@ -741,10 +877,11 @@ pub struct StorageEntry {
     pub migration: Option<Migration>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StorageSchema {
     pub format_version: u32,
+    pub complete: bool,
     pub schema_version: u32,
     pub contract_version: String,
     pub entries: Vec<StorageEntry>,
@@ -756,7 +893,7 @@ impl StorageSchema {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HistoricalField {
     #[serde(rename = "type")]
@@ -766,7 +903,7 @@ pub struct HistoricalField {
     pub retired_in: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TypeHistory {
     #[serde(default)]
@@ -775,12 +912,14 @@ pub struct TypeHistory {
     pub reserved_fields: BTreeSet<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SchemaHistory {
     pub format_version: u32,
+    pub complete: bool,
     pub types: BTreeMap<String, TypeHistory>,
-    #[serde(default, skip_deserializing)]
+    #[serde(default)]
+    #[schemars(skip)]
     pub source_sha256: String,
 }
 
@@ -792,7 +931,9 @@ impl SchemaHistory {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EvidenceStatus {
     Fact,
@@ -800,7 +941,7 @@ pub enum EvidenceStatus {
     Unknown,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceItem {
     pub status: EvidenceStatus,
@@ -809,7 +950,7 @@ pub struct EvidenceItem {
     pub limitation: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceCoverage {
     pub compiled_contract_spec: EvidenceItem,
@@ -823,7 +964,7 @@ pub struct EvidenceCoverage {
     pub migration_completion: EvidenceItem,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImpactStep {
     pub owner_type: String,
@@ -831,7 +972,7 @@ pub struct ImpactStep {
     pub target_type: String,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublicImpact {
     pub changed_type: String,
@@ -841,9 +982,11 @@ pub struct PublicImpact {
     pub runtime_compatibility: EvidenceStatus,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ValidationReport {
+    pub format_version: u32,
+    pub tool_version: String,
     pub safe: bool,
     pub policy: Policy,
     pub context: ValidationContext,
@@ -854,7 +997,13 @@ pub struct ValidationReport {
     pub evidence: EvidenceCoverage,
     pub storage_schema_checked: bool,
     pub schema_history_checked: bool,
+    pub policy_sha256: String,
+    pub source_schema_sha256: Option<String>,
+    pub target_schema_sha256: Option<String>,
     pub schema_history_sha256: Option<String>,
+    pub source_schema: Option<StorageSchema>,
+    pub target_schema: Option<StorageSchema>,
+    pub schema_history: Option<SchemaHistory>,
 }
 
 pub fn validate(
@@ -907,15 +1056,20 @@ pub fn validate_with_history(
 
     check_policy(policy, &mut findings);
     check_protocol_context(context, &mut findings);
+    check_environment_compatibility(target, context, &mut findings);
     check_cap_0086(target, context, &mut findings);
 
     if policy.require_upgrade_function && !target.has_function("upgrade") {
         findings.push(error(
             "UPG001",
             "Target removes the upgrade entrypoint",
-            "The target contract specification has no `upgrade` function. A successful deployment would make subsequent upgrades unavailable unless another authorized entrypoint performs the host update.",
+            "The target contract specification has no `upgrade` function. A successful deployment makes subsequent upgrades unavailable without another authorized host update.",
             "Retain an authorized `upgrade` entrypoint or explicitly approve immutability as a terminal release.",
         ));
+    }
+    if policy.require_upgrade_function {
+        check_upgrade_host_capability(source, "source", "UPG003", &mut findings);
+        check_upgrade_host_capability(target, "target", "UPG004", &mut findings);
     }
 
     if target.has_function("__constructor") {
@@ -943,12 +1097,22 @@ pub fn validate_with_history(
     if let Some(history) = schema_history {
         validate_schema_history(source, target, history, &mut findings);
     } else {
-        findings.push(warning(
+        let finding = if policy.require_schema_history {
+            error(
+                "HIS000",
+                "Historical field lifecycle was not checked",
+                "A two-artifact comparison cannot detect reuse of a field name from an older release.",
+                "Commit a complete schema-history manifest and pass `--schema-history`.",
+            )
+        } else {
+            warning(
             "HIS000",
             "Historical field lifecycle was not checked",
             "A two-artifact comparison cannot detect reuse of a field name that existed in an older release or prove that archived state no longer contains retired layouts.",
-            "Commit a cumulative schema-history manifest and pass `--schema-history` for production review.",
-        ));
+            "Commit a complete schema-history manifest and pass `--schema-history`.",
+            )
+        };
+        findings.push(finding);
     }
 
     match (source_schema, target_schema) {
@@ -956,12 +1120,24 @@ pub fn validate_with_history(
             validate_schema_manifests(source, target, from, to, &mut findings);
             compare_storage_schemas(from, to, &mut findings);
         }
-        (None, None) => findings.push(warning(
-            "STO000",
-            "Storage compatibility was not checked",
-            "Soroban WASM exposes the contract interface but does not provide a complete, standardized description of every storage key and value layout.",
-            "Commit source and target storage schema manifests and pass them to validation before approving production upgrades.",
-        )),
+        (None, None) => {
+            let finding = if policy.require_storage_schema {
+                error(
+                    "STO000",
+                    "Storage compatibility was not checked",
+                    "Soroban WASM does not contain a complete description of all storage keys and value layouts.",
+                    "Commit complete source and target storage schemas and pass both files.",
+                )
+            } else {
+                warning(
+                    "STO000",
+                    "Storage compatibility was not checked",
+                    "Soroban WASM does not contain a complete description of all storage keys and value layouts.",
+                    "Commit complete source and target storage schemas and pass both files.",
+                )
+            };
+            findings.push(finding);
+        }
         _ => findings.push(error(
             "STO004",
             "Storage schema pair is incomplete",
@@ -970,15 +1146,25 @@ pub fn validate_with_history(
         )),
     }
 
+    let (public_impacts, impact_limit_exceeded) = trace_public_impacts(source, target);
+    if impact_limit_exceeded {
+        findings.push(error(
+            "RES001",
+            "Public type-impact analysis exceeded its limit",
+            "The type graph produced too many paths or too much traversal work for a complete result.",
+            "Reduce the public type graph or split the contract interface before approval.",
+        ));
+    }
     findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.code.cmp(&b.code)));
     let safe = !findings.iter().any(|f| f.severity == Severity::Error);
-    let public_impacts = trace_public_impacts(source, target);
     let evidence = build_evidence_coverage(
         context,
         source_schema.is_some() && target_schema.is_some(),
         schema_history.is_some(),
     );
     ValidationReport {
+        format_version: 1,
+        tool_version: env!("CARGO_PKG_VERSION").into(),
         safe,
         policy: policy.clone(),
         context: context.clone(),
@@ -989,8 +1175,57 @@ pub fn validate_with_history(
         evidence,
         storage_schema_checked: source_schema.is_some() && target_schema.is_some(),
         schema_history_checked: schema_history.is_some(),
+        policy_sha256: canonical_sha256(policy),
+        source_schema_sha256: source_schema.map(canonical_sha256),
+        target_schema_sha256: target_schema.map(canonical_sha256),
         schema_history_sha256: schema_history.map(|history| history.source_sha256.clone()),
+        source_schema: source_schema.cloned(),
+        target_schema: target_schema.cloned(),
+        schema_history: schema_history.cloned(),
     }
+}
+
+fn check_upgrade_host_capability(
+    artifact: &Artifact,
+    side: &str,
+    code: &str,
+    findings: &mut Vec<Finding>,
+) {
+    if !artifact.has_function("upgrade") {
+        if side == "source" {
+            findings.push(error(
+                code,
+                "Source has no executable upgrade path",
+                "The source Contract Spec has no `upgrade` function for the planned replacement.",
+                "Deploy through an existing authorized replacement path before you use the standard planner.",
+            ));
+        }
+        return;
+    }
+    let reaches_update = artifact
+        .export_call_evidence
+        .get("upgrade")
+        .is_some_and(|evidence| {
+            evidence
+                .host_imports
+                .contains(UPDATE_CURRENT_CONTRACT_WASM_IMPORT)
+        });
+    if !reaches_update {
+        findings.push(error(
+            code,
+            &format!("{side} upgrade function cannot replace WASM"),
+            &format!(
+                "The {side} `upgrade` export does not reach Stellar host import `{UPDATE_CURRENT_CONTRACT_WASM_IMPORT}`."
+            ),
+            "Call `update_current_contract_wasm` from the authorized upgrade path and rebuild the exact candidate.",
+        ));
+    }
+}
+
+fn canonical_sha256<T: Serialize>(value: &T) -> String {
+    serde_json::to_vec(value)
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .unwrap_or_default()
 }
 
 fn evidence_item(
@@ -1023,7 +1258,7 @@ fn build_evidence_coverage(
                 EvidenceStatus::Fact,
                 "The named network reported the recorded target protocol at the observation time.",
                 "Live Stellar CLI network-info evidence is embedded in the report.",
-                Some("Network state can change; resolve it again immediately before execution."),
+                Some("Network state can change. Resolve it again immediately before execution."),
             )
         }
         ProtocolSource::OfflineAssertion => evidence_item(
@@ -1051,7 +1286,7 @@ fn build_evidence_coverage(
             EvidenceStatus::Fact,
             "The report records artifact-wide host imports and direct per-export reachability.",
             "The validator inspected the WASM import, export, and code sections.",
-            Some("Dynamic dispatch is flagged because static reachability would be incomplete."),
+            Some("Dynamic dispatch makes static reachability incomplete."),
         ),
         target_network_protocol,
         declared_storage_schema: if storage_schema_checked {
@@ -1087,8 +1322,8 @@ fn build_evidence_coverage(
         ledger_storage_coverage: evidence_item(
             EvidenceStatus::Unknown,
             "Complete live and archived ledger storage coverage is not proven.",
-            "The MVP does not yet sample or enumerate deployed ledger state.",
-            Some("Snapshot sampling and migration rehearsal are funded scope."),
+            "Artifact validation does not sample or enumerate deployed ledger state.",
+            Some("Use an application-specific snapshot rehearsal before a production migration."),
         ),
         deployed_caller_graph: evidence_item(
             EvidenceStatus::Unknown,
@@ -1105,13 +1340,13 @@ fn build_evidence_coverage(
         migration_completion: evidence_item(
             EvidenceStatus::Unknown,
             "Ledger-wide migration completion and invariant preservation are not proven.",
-            "The MVP validates declarations and includes one reference Testnet execution.",
-            Some("Generalized state rehearsal and completion evidence are funded scope."),
+            "The validator checks declarations but does not execute application migrations.",
+            Some("Record application-specific rehearsal, completion, and invariant evidence."),
         ),
     }
 }
 
-fn trace_public_impacts(source: &Artifact, target: &Artifact) -> Vec<PublicImpact> {
+fn trace_public_impacts(source: &Artifact, target: &Artifact) -> (Vec<PublicImpact>, bool) {
     let changed_types = source
         .user_types
         .iter()
@@ -1150,10 +1385,14 @@ fn trace_public_impacts(source: &Artifact, target: &Artifact) -> Vec<PublicImpac
         .collect::<Vec<_>>();
 
     let mut impacts = BTreeSet::new();
+    let mut limit_exceeded = false;
     for boundary in retained_boundaries {
         for changed_type in &changed_types {
-            let source_routes = routes_to_type(source, &boundary.root_type, changed_type);
-            let target_routes = routes_to_type(target, &boundary.root_type, changed_type);
+            let (source_routes, source_limited) =
+                routes_to_type(source, &boundary.root_type, changed_type);
+            let (target_routes, target_limited) =
+                routes_to_type(target, &boundary.root_type, changed_type);
+            limit_exceeded |= source_limited || target_limited;
             for steps in source_routes.intersection(&target_routes) {
                 impacts.insert(PublicImpact {
                     changed_type: changed_type.clone(),
@@ -1165,64 +1404,61 @@ fn trace_public_impacts(source: &Artifact, target: &Artifact) -> Vec<PublicImpac
             }
         }
     }
-    impacts.into_iter().collect()
+    (impacts.into_iter().collect(), limit_exceeded)
 }
 
 fn routes_to_type(
     artifact: &Artifact,
     root_type: &str,
     target_type: &str,
-) -> BTreeSet<Vec<ImpactStep>> {
-    fn walk(
-        artifact: &Artifact,
-        current: &str,
-        target: &str,
-        steps: &mut Vec<ImpactStep>,
-        active_types: &mut BTreeSet<String>,
-        result: &mut BTreeSet<Vec<ImpactStep>>,
-    ) {
-        if current == target {
-            result.insert(steps.clone());
-            return;
+) -> (BTreeSet<Vec<ImpactStep>>, bool) {
+    let mut result = BTreeSet::new();
+    let mut visited_steps = 0;
+    let mut limit_exceeded = false;
+    let mut pending = Vec::new();
+    if artifact.user_types.contains_key(root_type) {
+        pending.push((root_type.to_owned(), Vec::new(), BTreeSet::new()));
+    }
+
+    while let Some((current, steps, mut active_types)) = pending.pop() {
+        visited_steps += 1;
+        if visited_steps > MAX_PUBLIC_IMPACT_STEPS
+            || steps.len() > MAX_PUBLIC_IMPACT_DEPTH
+            || result.len() >= MAX_PUBLIC_IMPACT_PATHS
+        {
+            limit_exceeded = true;
+            break;
         }
-        if !active_types.insert(current.to_owned()) {
-            return;
+        if current == target_type {
+            result.insert(steps);
+            continue;
+        }
+        if !active_types.insert(current.clone()) {
+            continue;
         }
         for edge in artifact
             .type_references
             .iter()
+            .rev()
             .filter(|edge| edge.owner_type == current)
         {
-            steps.push(ImpactStep {
+            if pending.len() + visited_steps >= MAX_PUBLIC_IMPACT_STEPS {
+                limit_exceeded = true;
+                break;
+            }
+            let mut next_steps = steps.clone();
+            next_steps.push(ImpactStep {
                 owner_type: edge.owner_type.clone(),
                 member: edge.member.clone(),
                 target_type: edge.target_type.clone(),
             });
-            walk(
-                artifact,
-                &edge.target_type,
-                target,
-                steps,
-                active_types,
-                result,
-            );
-            steps.pop();
+            pending.push((edge.target_type.clone(), next_steps, active_types.clone()));
         }
-        active_types.remove(current);
+        if limit_exceeded {
+            break;
+        }
     }
-
-    let mut result = BTreeSet::new();
-    if artifact.user_types.contains_key(root_type) {
-        walk(
-            artifact,
-            root_type,
-            target_type,
-            &mut Vec::new(),
-            &mut BTreeSet::new(),
-            &mut result,
-        );
-    }
-    result
+    (result, limit_exceeded)
 }
 
 fn check_policy(policy: &Policy, findings: &mut Vec<Finding>) {
@@ -1231,7 +1467,7 @@ fn check_policy(policy: &Policy, findings: &mut Vec<Finding>) {
             "POL001",
             "Unsupported policy format",
             &format!(
-                "Policy `{}` uses format version {}; this build supports version 1.",
+                "Policy `{}` uses format version {}. This build supports version 1.",
                 policy.name, policy.format_version
             ),
             "Regenerate the policy with a supported format or upgrade the validator before relying on its result.",
@@ -1244,11 +1480,15 @@ fn check_policy(policy: &Policy, findings: &mut Vec<Finding>) {
             "retained upgrade entrypoint",
         ),
         (!policy.require_semver_increase, "increasing `binver`"),
+        (!policy.require_storage_schema, "complete storage schemas"),
+        (!policy.require_schema_history, "complete schema history"),
         (!policy.deny_removed_functions, "removed public functions"),
         (
             !policy.deny_changed_functions,
             "changed function signatures",
         ),
+        (!policy.deny_removed_events, "removed contract events"),
+        (!policy.deny_changed_events, "changed contract events"),
         (
             !policy.deny_changed_user_types,
             "changed or removed user-defined types",
@@ -1268,6 +1508,40 @@ fn check_policy(policy: &Policy, findings: &mut Vec<Finding>) {
                 disabled.join(", ")
             ),
             "Use the conservative default or ensure every exception is reviewed and preserved in the plan digest.",
+        ));
+    }
+}
+
+fn check_environment_compatibility(
+    target: &Artifact,
+    context: &ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    if target.env_pre_release != 0 {
+        findings.push(error(
+            "ENV001",
+            "Candidate uses a prerelease host interface",
+            &format!(
+                "The candidate declares environment protocol {} with prerelease value {}.",
+                target.env_protocol_version, target.env_pre_release
+            ),
+            "Build the candidate with a stable Soroban SDK before release.",
+        ));
+    }
+
+    if context
+        .target_protocol_version
+        .is_some_and(|protocol| protocol < target.env_protocol_version)
+    {
+        findings.push(error(
+            "ENV002",
+            "Candidate requires a newer network protocol",
+            &format!(
+                "The candidate requires protocol {}, but the selected network evidence reports protocol {}.",
+                target.env_protocol_version,
+                context.target_protocol_version.unwrap_or_default()
+            ),
+            "Use a compatible SDK or wait for the network protocol upgrade.",
         ));
     }
 }
@@ -1361,7 +1635,7 @@ fn check_cap_0086(target: &Artifact, context: &ValidationContext, findings: &mut
             "CAP003",
             "Protocol supports CAP-0086 but the candidate does not use sparse decoding",
             &format!(
-                "Protocol {protocol} exposes CAP-0086, but this WASM does not import `sparse_map_unpack_to_linear_memory`; its contract-type decoding remains strict."
+                "Protocol {protocol} exposes CAP-0086, but this WASM does not import `sparse_map_unpack_to_linear_memory`. Its contract-type decoding remains strict."
             ),
             "Use an SDK or explicit implementation that opts into CAP-0086 before treating missing or additional fields as compatible.",
         )),
@@ -1452,10 +1726,42 @@ fn validate_schema_manifests(
                 "STO006",
                 "Unsupported storage manifest format",
                 &format!(
-                    "The {side} manifest uses format version {}; this build supports version 1.",
+                    "The {side} manifest uses format version {}. This build supports version 1.",
                     schema.format_version
                 ),
                 "Regenerate the manifest with a supported tool version or upgrade the validator before relying on its result.",
+            ));
+        }
+
+        if !schema.complete {
+            findings.push(error(
+                "STO010",
+                "Storage schema is not marked complete",
+                &format!(
+                    "The {side} storage schema does not declare complete coverage of its known storage keys."
+                ),
+                "Set `complete` to true only after you include every known storage key and value type.",
+            ));
+        }
+
+        if schema.schema_version == 0 {
+            findings.push(error(
+                "STO011",
+                "Storage schema version is zero",
+                &format!("The {side} storage schema must use a positive schema version."),
+                "Set `schemaVersion` to the version that the contract stores or enforces.",
+            ));
+        }
+
+        if Version::parse(&schema.contract_version).is_err() {
+            findings.push(error(
+                "STO012",
+                "Storage schema contract version is invalid",
+                &format!(
+                    "The {side} storage schema uses `{}` as its contract version.",
+                    schema.contract_version
+                ),
+                "Use the exact semantic version from the artifact `binver` metadata.",
             ));
         }
 
@@ -1495,18 +1801,42 @@ fn validate_schema_manifests(
         let Some(migration) = &entry.migration else {
             continue;
         };
-        if let Some(entrypoint) = &migration.entrypoint {
-            if !target.has_function(entrypoint) {
-                findings.push(error(
-                    "STO009",
-                    "Declared migration entrypoint is missing",
-                    &format!(
-                        "Storage key `{}` declares migration entrypoint `{entrypoint}`, but the target WASM specification does not export it.",
-                        entry.key
-                    ),
-                    "Export the declared migration function or correct the manifest and rehearse the selected strategy.",
-                ));
-            }
+        if migration.strategy.trim().is_empty()
+            || migration.strategy.len() > 128
+            || migration.strategy.chars().any(char::is_control)
+        {
+            findings.push(error(
+                "STO013",
+                "Migration strategy is invalid",
+                &format!(
+                    "Storage key `{}` has an empty, oversized, or invalid migration strategy.",
+                    entry.key
+                ),
+                "Use a short reviewed strategy name without control characters.",
+            ));
+        }
+        let Some(entrypoint) = &migration.entrypoint else {
+            findings.push(error(
+                "STO014",
+                "Migration entrypoint is not declared",
+                &format!(
+                    "Storage key `{}` has migration data without an entrypoint.",
+                    entry.key
+                ),
+                "Name the exported idempotent migration function in the storage declaration.",
+            ));
+            continue;
+        };
+        if !target.has_function(entrypoint) {
+            findings.push(error(
+                "STO009",
+                "Declared migration entrypoint is missing",
+                &format!(
+                    "Storage key `{}` declares migration entrypoint `{entrypoint}`, but the target WASM specification does not export it.",
+                    entry.key
+                ),
+                "Export the declared migration function or correct the manifest and rehearse the selected strategy.",
+            ));
         }
     }
 }
@@ -1522,12 +1852,76 @@ fn validate_schema_history(
             "HIS001",
             "Unsupported schema-history format",
             &format!(
-                "The history manifest uses format version {}; this build supports version 1.",
+                "The history manifest uses format version {}. This build supports version 1.",
                 history.format_version
             ),
             "Regenerate the history manifest with a supported format before relying on it.",
         ));
         return;
+    }
+    if !history.complete {
+        findings.push(error(
+            "HIS012",
+            "Schema history is not marked complete",
+            "The history does not declare complete coverage of all known releases and fields.",
+            "Set `complete` to true only after you reconstruct and review the full release history.",
+        ));
+    }
+
+    for (type_name, type_history) in &history.types {
+        for (field_name, record) in &type_history.fields {
+            let first_seen = Version::parse(&record.first_seen);
+            let retired_in = record.retired_in.as_deref().map(Version::parse).transpose();
+            if first_seen.is_err() || retired_in.is_err() {
+                findings.push(error(
+                    "HIS013",
+                    "History contains an invalid semantic version",
+                    &format!(
+                        "History for `{type_name}.{field_name}` has an invalid `firstSeen` or `retiredIn` value."
+                    ),
+                    "Use exact semantic versions from released `binver` metadata.",
+                ));
+                continue;
+            }
+            if let (Ok(first_seen), Ok(Some(retired_in))) = (first_seen, retired_in) {
+                if retired_in < first_seen {
+                    findings.push(error(
+                        "HIS014",
+                        "Field retirement precedes its first release",
+                        &format!(
+                            "History retires `{type_name}.{field_name}` in {retired_in}, before its first release {first_seen}."
+                        ),
+                        "Correct the release versions from attested historical artifacts.",
+                    ));
+                }
+                if !type_history.reserved_fields.contains(field_name) {
+                    findings.push(error(
+                        "HIS015",
+                        "Retired field name is not reserved",
+                        &format!(
+                            "History retires `{type_name}.{field_name}` but does not reserve the field name."
+                        ),
+                        "Add every retired field name to `reservedFields` and never reuse it.",
+                    ));
+                }
+            }
+        }
+        for field_name in &type_history.reserved_fields {
+            if type_history
+                .fields
+                .get(field_name)
+                .is_none_or(|record| record.retired_in.is_none())
+            {
+                findings.push(error(
+                    "HIS016",
+                    "Reserved field has no retirement record",
+                    &format!(
+                        "History reserves `{type_name}.{field_name}` without a matching retired field record."
+                    ),
+                    "Record the historical type and retirement release for each reserved field name.",
+                ));
+            }
+        }
     }
 
     let source_version = source.version().unwrap_or("unknown");
@@ -1561,7 +1955,7 @@ fn validate_schema_history(
                         display_json(&record.value_type),
                         display_json(field_type)
                     ),
-                    "Correct the history from signed release artifacts; do not rewrite history to fit the candidate.",
+                    "Correct the history from attested release artifacts. Do not rewrite history to fit the candidate.",
                 ));
             }
         }
@@ -1611,7 +2005,7 @@ fn validate_schema_history(
                         "Target {target_version} contains `{type_name}.{field_name}`, which history marks retired in {}.",
                         record.retired_in.as_deref().unwrap_or("an earlier release")
                     ),
-                    "Use a new field name; never reinterpret a retired key across stored or cross-contract maps.",
+                    "Use a new field name. Never reinterpret a retired key across stored or cross-contract maps.",
                 ));
             }
             if record.value_type != *field_type {
@@ -1667,14 +2061,14 @@ fn validate_schema_history(
                     &format!(
                         "Target {target_version} removes `{type_name}.{field_name}` without recording retirement in this release and permanently reserving the name."
                     ),
-                    "Keep the field, or record `retiredIn` and add it to `reservedFields`; separately prove all migration and reader compatibility assumptions.",
+                    "Keep the field, or record `retiredIn` and add it to `reservedFields`. Prove all migration and reader compatibility assumptions separately.",
                 ));
             } else {
                 findings.push(warning(
                     "HIS011",
                     "Field removal is explicitly retired but remains migration-sensitive",
                     &format!(
-                        "`{type_name}.{field_name}` is retired and reserved in {target_version}; archived records or older contracts may still carry it."
+                        "`{type_name}.{field_name}` is retired and reserved in {target_version}. Archived records or older contracts can still carry it."
                     ),
                     "Rehearse archived-state reads and dependency rollout, and never reuse the field name.",
                 ));
@@ -1710,7 +2104,7 @@ fn check_versions(
         findings.push(error(
             "VER001",
             "Missing SEP-49 `binver` metadata",
-            "Both source and target WASM should embed a semantic version under the `binver` contract metadata key.",
+            "Both source and target WASM must embed a semantic version under the `binver` contract metadata key.",
             "Build with `stellar contract build --meta binver=<semver>` for both artifacts.",
         ));
         return;
@@ -1753,6 +2147,26 @@ fn compare_interfaces(
                     "Public function signature changed",
                     &format!("The inputs, output, or specification of `{name}` changed."),
                     "Add a new entrypoint and keep the old signature until downstream clients have migrated.",
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    for (name, old) in &source.events {
+        match target.events.get(name) {
+            None if policy.deny_removed_events => findings.push(error(
+                "EVT001",
+                "Contract event was removed",
+                &format!("The target contract removes event `{name}` from the public specification."),
+                "Keep the event schema or complete a reviewed indexer migration before the release.",
+            )),
+            Some(new) if policy.deny_changed_events && old.canonical != new.canonical => {
+                findings.push(error(
+                    "EVT002",
+                    "Contract event schema changed",
+                    &format!("The topics, parameters, types, or data format of event `{name}` changed."),
+                    "Add a new event name and keep the old schema for existing consumers.",
                 ));
             }
             _ => {}
@@ -1956,9 +2370,10 @@ fn info(code: &str, title: &str, detail: &str, remediation: &str) -> Finding {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStepKind {
+    VerifyCurrentExecutable,
     UploadTargetWasm,
     SimulateUpgrade,
     ExecuteUpgrade,
@@ -1967,7 +2382,14 @@ pub enum PlanStepKind {
     VerifyInvariants,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    OfflineDraft,
+    ReviewReady,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlanStep {
     pub position: u32,
@@ -1976,6 +2398,38 @@ pub struct PlanStep {
     pub arguments: Vec<String>,
     pub command: String,
     pub expected: String,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MigrationCall {
+    pub entrypoint: String,
+    pub arguments: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InvariantCheck {
+    pub program: String,
+    pub arguments: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanOperations {
+    pub migration: Option<MigrationCall>,
+    pub invariant_check: InvariantCheck,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanInputPaths {
+    pub source_wasm: String,
+    pub target_wasm: String,
+    pub source_schema: String,
+    pub target_schema: String,
+    pub schema_history: String,
+    pub policy: Option<String>,
 }
 
 impl PlanStep {
@@ -2018,19 +2472,23 @@ fn shell_quote(value: &str) -> String {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpgradePlan {
     pub format_version: u32,
     pub plan_sha256: String,
+    pub status: PlanStatus,
     pub network: String,
     pub contract_id: String,
     pub source_identity: String,
+    pub inputs: PlanInputPaths,
     pub source_wasm_sha256: String,
     pub target_wasm_sha256: String,
     pub rollback_wasm_sha256: String,
     pub from_version: Option<String>,
     pub to_version: Option<String>,
+    pub migration: Option<MigrationCall>,
+    pub invariant_check: InvariantCheck,
     pub validation: ValidationReport,
     pub steps: Vec<PlanStep>,
 }
@@ -2049,6 +2507,46 @@ pub fn create_plan(
     target_wasm_path: &str,
     migration_entrypoint: Option<&str>,
 ) -> Result<UpgradePlan, Error> {
+    let migration = migration_entrypoint.map(|entrypoint| MigrationCall {
+        entrypoint: entrypoint.into(),
+        arguments: BTreeMap::from([("operator".into(), source_identity.into())]),
+    });
+    create_plan_with_paths(
+        report,
+        network,
+        contract_id,
+        source_identity,
+        PlanInputPaths {
+            source_wasm: "source.wasm".into(),
+            target_wasm: target_wasm_path.into(),
+            source_schema: "source.schema.json".into(),
+            target_schema: "target.schema.json".into(),
+            schema_history: "schema-history.json".into(),
+            policy: None,
+        },
+        PlanOperations {
+            migration,
+            invariant_check: InvariantCheck {
+                program: "cargo".into(),
+                arguments: strings(&["test", "--workspace"]),
+            },
+        },
+    )
+}
+
+pub fn create_plan_with_paths(
+    report: ValidationReport,
+    network: &str,
+    contract_id: &str,
+    source_identity: &str,
+    inputs: PlanInputPaths,
+    operations: PlanOperations,
+) -> Result<UpgradePlan, Error> {
+    let PlanOperations {
+        migration,
+        invariant_check,
+    } = operations;
+    validate_plan_input_paths(&inputs)?;
     if stellar_strkey::Contract::from_string(contract_id).is_err() {
         return Err(Error::InvalidContractId(contract_id.into()));
     }
@@ -2096,36 +2594,81 @@ pub fn create_plan(
         ));
     }
 
-    if report
+    validate_source_identity(source_identity)?;
+
+    let storage_migration_required = report
         .findings
         .iter()
-        .any(|finding| finding.code == "STO002")
-        && migration_entrypoint.is_none()
-    {
+        .any(|finding| finding.code == "STO002");
+    if storage_migration_required && migration.is_none() {
         return Err(Error::Plan(
             "storage layout changed but no migration entrypoint was selected".into(),
         ));
     }
-
-    if let Some(entrypoint) = migration_entrypoint {
-        if !report.target.has_function(entrypoint) {
+    if storage_migration_required {
+        let declared = report
+            .target_schema
+            .as_ref()
+            .into_iter()
+            .flat_map(|schema| &schema.entries)
+            .filter_map(|entry| entry.migration.as_ref()?.entrypoint.as_ref())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let selected = migration
+            .as_ref()
+            .map(|call| BTreeSet::from([call.entrypoint.clone()]))
+            .unwrap_or_default();
+        if declared != selected {
             return Err(Error::Plan(format!(
-                "migration entrypoint `{entrypoint}` is not exported by the target WASM"
+                "selected migration [{}] does not match declared entrypoints [{}]",
+                selected.into_iter().collect::<Vec<_>>().join(", "),
+                declared.into_iter().collect::<Vec<_>>().join(", ")
             )));
         }
     }
 
+    validate_standard_upgrade_entrypoint(&report.source)?;
+    validate_standard_upgrade_entrypoint(&report.target)?;
+
+    if let Some(migration) = &migration {
+        validate_call_arguments(
+            &report.target,
+            &migration.entrypoint,
+            &migration.arguments,
+            "migration",
+        )?;
+    }
+    validate_invariant_check(&invariant_check)?;
+
+    let source_hash = report.source.sha256.clone();
     let target_hash = report.target.sha256.clone();
     let mut steps = vec![
         PlanStep::new(
             1,
+            PlanStepKind::VerifyCurrentExecutable,
+            "stellar",
+            strings(&[
+                "contract",
+                "fetch",
+                "--id",
+                contract_id,
+                "--network",
+                network,
+                "--out-file",
+                "current.wasm",
+            ]),
+            format!("Fetched WASM SHA-256 equals {source_hash}"),
+        ),
+        PlanStep::new(
+            2,
             PlanStepKind::UploadTargetWasm,
             "stellar",
             strings(&[
                 "contract",
                 "upload",
                 "--wasm",
-                target_wasm_path,
+                &inputs.target_wasm,
+                "--optimize=false",
                 "--source-account",
                 source_identity,
                 "--network",
@@ -2134,7 +2677,7 @@ pub fn create_plan(
             format!("WASM hash {target_hash}"),
         ),
         PlanStep::new(
-            2,
+            3,
             PlanStepKind::SimulateUpgrade,
             "stellar",
             strings(&[
@@ -2158,7 +2701,7 @@ pub fn create_plan(
             "Successful simulation with expected authorization and resource footprint".into(),
         ),
         PlanStep::new(
-            3,
+            4,
             PlanStepKind::ExecuteUpgrade,
             "stellar",
             strings(&[
@@ -2181,25 +2724,28 @@ pub fn create_plan(
         ),
     ];
 
-    if let Some(entrypoint) = migration_entrypoint {
+    if let Some(migration) = &migration {
+        let mut migration_arguments = strings(&[
+            "contract",
+            "invoke",
+            "--id",
+            contract_id,
+            "--source-account",
+            source_identity,
+            "--network",
+            network,
+            "--",
+            &migration.entrypoint,
+        ]);
+        for (name, value) in &migration.arguments {
+            migration_arguments.push(format!("--{name}"));
+            migration_arguments.push(value.clone());
+        }
         steps.push(PlanStep::new(
-            4,
+            5,
             PlanStepKind::ExecuteMigration,
             "stellar",
-            strings(&[
-                "contract",
-                "invoke",
-                "--id",
-                contract_id,
-                "--source-account",
-                source_identity,
-                "--network",
-                network,
-                "--",
-                entrypoint,
-                "--operator",
-                source_identity,
-            ]),
+            migration_arguments,
             "Migration succeeds once and records the new schema version".into(),
         ));
     }
@@ -2223,22 +2769,30 @@ pub fn create_plan(
     steps.push(PlanStep::new(
         next + 1,
         PlanStepKind::VerifyInvariants,
-        "cargo",
-        strings(&["test", "--workspace"]),
-        "All upgrade-chain, migration, authorization, and rollback invariants pass".into(),
+        &invariant_check.program,
+        invariant_check.arguments.clone(),
+        "The application-specific post-upgrade invariants pass".into(),
     ));
 
     let mut plan = UpgradePlan {
-        format_version: 2,
+        format_version: 3,
         plan_sha256: String::new(),
+        status: if report.context.protocol_source == ProtocolSource::StellarCliNetworkInfo {
+            PlanStatus::ReviewReady
+        } else {
+            PlanStatus::OfflineDraft
+        },
         network: network.into(),
         contract_id: contract_id.into(),
         source_identity: source_identity.into(),
+        inputs,
         source_wasm_sha256: report.source.sha256.clone(),
         target_wasm_sha256: report.target.sha256.clone(),
         rollback_wasm_sha256: report.source.sha256.clone(),
         from_version: report.source.version().map(str::to_owned),
         to_version: report.target.version().map(str::to_owned),
+        migration,
+        invariant_check,
         validation: report,
         steps,
     };
@@ -2266,11 +2820,26 @@ pub fn verify_plan_digest(plan: &UpgradePlan) -> Result<bool, Error> {
 }
 
 fn validate_plan_structure(plan: &UpgradePlan) -> Result<(), Error> {
-    if plan.format_version != 2 {
+    if plan.format_version != 3 {
         return Err(Error::Plan(format!(
-            "unsupported plan format version {}; this build supports version 2",
+            "unsupported plan format version {}. This build supports version 3",
             plan.format_version
         )));
+    }
+
+    let revalidated = validate_with_history(
+        &plan.validation.source,
+        &plan.validation.target,
+        plan.validation.source_schema.as_ref(),
+        plan.validation.target_schema.as_ref(),
+        &plan.validation.policy,
+        &plan.validation.context,
+        plan.validation.schema_history.as_ref(),
+    );
+    if revalidated != plan.validation {
+        return Err(Error::Plan(
+            "embedded validation report does not match a fresh validation of its evidence".into(),
+        ));
     }
 
     let upload_steps = plan
@@ -2285,6 +2854,11 @@ fn validate_plan_structure(plan: &UpgradePlan) -> Result<(), Error> {
     }
     let target_wasm_path = argument_after(&upload_steps[0].arguments, "--wasm")
         .ok_or_else(|| Error::Plan("upload step has no `--wasm` argument".into()))?;
+    if target_wasm_path != plan.inputs.target_wasm {
+        return Err(Error::Plan(
+            "upload step target does not match the plan input path".into(),
+        ));
+    }
 
     let migration_steps = plan
         .steps
@@ -2296,28 +2870,22 @@ fn validate_plan_structure(plan: &UpgradePlan) -> Result<(), Error> {
             "plan contains more than one migration step".into(),
         ));
     }
-    let migration_entrypoint = migration_steps
-        .first()
-        .map(|step| {
-            let separator = step
-                .arguments
-                .iter()
-                .position(|argument| argument == "--")
-                .ok_or_else(|| Error::Plan("migration step has no `--` separator".into()))?;
-            step.arguments
-                .get(separator + 1)
-                .map(String::as_str)
-                .ok_or_else(|| Error::Plan("migration step has no entrypoint".into()))
-        })
-        .transpose()?;
+    if migration_steps.len() != usize::from(plan.migration.is_some()) {
+        return Err(Error::Plan(
+            "migration metadata and migration steps do not match".into(),
+        ));
+    }
 
-    let mut expected = create_plan(
+    let mut expected = create_plan_with_paths(
         plan.validation.clone(),
         &plan.network,
         &plan.contract_id,
         &plan.source_identity,
-        target_wasm_path,
-        migration_entrypoint,
+        plan.inputs.clone(),
+        PlanOperations {
+            migration: plan.migration.clone(),
+            invariant_check: plan.invariant_check.clone(),
+        },
     )?;
     let mut observed = plan.clone();
     expected.plan_sha256.clear();
@@ -2325,6 +2893,179 @@ fn validate_plan_structure(plan: &UpgradePlan) -> Result<(), Error> {
     if observed != expected {
         return Err(Error::Plan(
             "plan fields or commands do not match the canonical validation-derived plan".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_invariant_check(check: &InvariantCheck) -> Result<(), Error> {
+    if check.program.is_empty()
+        || check.program.len() > 256
+        || check
+            .program
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(Error::Plan(
+            "invariant program must be a non-empty command name without whitespace".into(),
+        ));
+    }
+    for argument in &check.arguments {
+        if argument.len() > 4_096 || argument.chars().any(char::is_control) {
+            return Err(Error::Plan(
+                "invariant arguments must not contain control characters or exceed 4096 bytes"
+                    .into(),
+            ));
+        }
+        if matches!(
+            stellar_strkey::Strkey::from_string(argument),
+            Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
+        ) {
+            return Err(Error::Plan(
+                "invariant arguments must not contain private keys".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_plan_input_paths(paths: &PlanInputPaths) -> Result<(), Error> {
+    let required = [
+        ("source WASM", paths.source_wasm.as_str()),
+        ("target WASM", paths.target_wasm.as_str()),
+        ("source schema", paths.source_schema.as_str()),
+        ("target schema", paths.target_schema.as_str()),
+        ("schema history", paths.schema_history.as_str()),
+    ];
+    for (label, path) in required {
+        if path.is_empty() || path.len() > 4_096 || path.chars().any(char::is_control) {
+            return Err(Error::Plan(format!(
+                "{label} path must be non-empty, contain no control characters, and stay within 4096 bytes"
+            )));
+        }
+    }
+    if let Some(path) = &paths.policy {
+        if path.is_empty() || path.len() > 4_096 || path.chars().any(char::is_control) {
+            return Err(Error::Plan(
+                "policy path must be non-empty, contain no control characters, and stay within 4096 bytes"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_standard_upgrade_entrypoint(target: &Artifact) -> Result<(), Error> {
+    let arguments = BTreeMap::from([
+        ("new_wasm_hash".into(), String::new()),
+        ("operator".into(), String::new()),
+    ]);
+    validate_call_arguments(
+        target,
+        "upgrade",
+        &arguments,
+        "OpenZeppelin-compatible upgrade",
+    )?;
+    let inputs = target
+        .functions
+        .get("upgrade")
+        .and_then(|function| function.canonical.pointer("/function_v0/inputs"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| Error::Plan("cannot read arguments for `upgrade`".into()))?;
+    let types = inputs
+        .iter()
+        .filter_map(|input| Some((input.get("name")?.as_str()?, input.get("type_")?.clone())))
+        .collect::<BTreeMap<_, _>>();
+    if types.get("new_wasm_hash") != Some(&serde_json::json!({"bytes_n": {"n": 32}}))
+        || types.get("operator") != Some(&serde_json::json!("address"))
+    {
+        return Err(Error::Plan(
+            "the `upgrade` entrypoint must use `new_wasm_hash: BytesN<32>` and `operator: Address`"
+                .into(),
+        ));
+    }
+    let reaches_update = target
+        .export_call_evidence
+        .get("upgrade")
+        .is_some_and(|evidence| {
+            evidence
+                .host_imports
+                .contains(UPDATE_CURRENT_CONTRACT_WASM_IMPORT)
+        });
+    if !reaches_update {
+        return Err(Error::Plan(
+            "the `upgrade` entrypoint must reach Stellar `update_current_contract_wasm`".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_call_arguments(
+    target: &Artifact,
+    entrypoint: &str,
+    arguments: &BTreeMap<String, String>,
+    call_kind: &str,
+) -> Result<(), Error> {
+    let function = target.functions.get(entrypoint).ok_or_else(|| {
+        Error::Plan(format!(
+            "{call_kind} entrypoint `{entrypoint}` is not exported by the target WASM"
+        ))
+    })?;
+    let inputs = function
+        .canonical
+        .pointer("/function_v0/inputs")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| Error::Plan(format!("cannot read arguments for `{entrypoint}`")))?;
+    let expected = inputs
+        .iter()
+        .map(|input| {
+            input
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| Error::Plan(format!("cannot read an argument for `{entrypoint}`")))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let supplied = arguments.keys().cloned().collect::<BTreeSet<_>>();
+    if expected != supplied {
+        return Err(Error::Plan(format!(
+            "{call_kind} entrypoint `{entrypoint}` requires arguments [{}], but the plan supplies [{}]",
+            expected.into_iter().collect::<Vec<_>>().join(", "),
+            supplied.into_iter().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    for value in arguments.values() {
+        if matches!(
+            stellar_strkey::Strkey::from_string(value),
+            Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
+        ) {
+            return Err(Error::Plan(
+                "plan arguments must not contain private keys".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_source_identity(source_identity: &str) -> Result<(), Error> {
+    if source_identity.is_empty()
+        || source_identity.len() > 128
+        || source_identity
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(Error::Plan(
+            "source identity must be a non-empty Stellar CLI alias or public account without whitespace"
+                .into(),
+        ));
+    }
+    if matches!(
+        stellar_strkey::Strkey::from_string(source_identity),
+        Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
+    ) {
+        return Err(Error::Plan(
+            "source identity must not contain a private key. Use a Stellar CLI alias or public account"
+                .into(),
         ));
     }
     Ok(())
@@ -2343,8 +3084,11 @@ mod tests {
 
     fn artifact(version: &str, functions: &[&str]) -> Artifact {
         Artifact {
+            format_version: 1,
             sha256: "00".repeat(32),
             size_bytes: 1,
+            env_protocol_version: 27,
+            env_pre_release: 0,
             metadata: BTreeMap::from([("binver".into(), version.into())]),
             host_imports: BTreeSet::new(),
             functions: functions
@@ -2355,21 +3099,58 @@ mod tests {
                         InterfaceEntry {
                             kind: "function".into(),
                             name: (*name).into(),
-                            canonical: serde_json::json!({}),
+                            canonical: match *name {
+                                "upgrade" => serde_json::json!({
+                                    "function_v0": {
+                                        "name": "upgrade",
+                                        "inputs": [
+                                            {"name": "new_wasm_hash", "type_": {"bytes_n": {"n": 32}}},
+                                            {"name": "operator", "type_": "address"}
+                                        ],
+                                        "outputs": []
+                                    }
+                                }),
+                                "migrate" => serde_json::json!({
+                                    "function_v0": {
+                                        "name": "migrate",
+                                        "inputs": [{"name": "operator", "type_": "address"}],
+                                        "outputs": []
+                                    }
+                                }),
+                                _ => serde_json::json!({}),
+                            },
                         },
                     )
                 })
                 .collect(),
+            events: BTreeMap::new(),
             user_types: BTreeMap::new(),
             public_type_boundaries: Vec::new(),
             type_references: Vec::new(),
-            export_call_evidence: BTreeMap::new(),
+            export_call_evidence: functions
+                .iter()
+                .map(|name| {
+                    let host_imports = if *name == "upgrade" {
+                        BTreeSet::from([UPDATE_CURRENT_CONTRACT_WASM_IMPORT.into()])
+                    } else {
+                        BTreeSet::new()
+                    };
+                    (
+                        (*name).into(),
+                        ExportCallEvidence {
+                            host_imports,
+                            dynamic_dispatch_reachable: false,
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 
     fn schema(version: u32, value_type: &str, migration: Option<Migration>) -> StorageSchema {
         StorageSchema {
             format_version: 1,
+            complete: true,
             schema_version: version,
             contract_version: format!("{version}.0.0"),
             entries: vec![StorageEntry {
@@ -2382,33 +3163,27 @@ mod tests {
     }
 
     fn safe_report() -> ValidationReport {
-        ValidationReport {
-            safe: true,
-            policy: Policy::default(),
-            context: ValidationContext {
-                target_protocol_version: Some(27),
-                protocol_source: ProtocolSource::OfflineAssertion,
-                network_name: Some("testnet".into()),
-                ..ValidationContext::default()
-            },
-            source: artifact("1.0.0", &["upgrade"]),
-            target: artifact("2.0.0", &["upgrade", "migrate"]),
-            findings: Vec::new(),
-            public_impacts: Vec::new(),
-            evidence: build_evidence_coverage(
-                &ValidationContext {
-                    target_protocol_version: Some(27),
-                    protocol_source: ProtocolSource::OfflineAssertion,
-                    network_name: Some("testnet".into()),
-                    ..ValidationContext::default()
-                },
-                true,
-                true,
-            ),
-            storage_schema_checked: true,
-            schema_history_checked: true,
-            schema_history_sha256: Some("11".repeat(32)),
-        }
+        let context = ValidationContext {
+            target_protocol_version: Some(27),
+            protocol_source: ProtocolSource::OfflineAssertion,
+            network_name: Some("testnet".into()),
+            ..ValidationContext::default()
+        };
+        let history = SchemaHistory {
+            format_version: 1,
+            complete: true,
+            types: BTreeMap::new(),
+            source_sha256: "11".repeat(32),
+        };
+        validate_with_history(
+            &artifact("1.0.0", &["upgrade"]),
+            &artifact("2.0.0", &["upgrade", "migrate"]),
+            Some(&schema(1, "u32", None)),
+            Some(&schema(2, "u32", None)),
+            &Policy::default(),
+            &context,
+            Some(&history),
+        )
     }
 
     fn struct_entry(name: &str, fields: &[(&str, serde_json::Value)]) -> InterfaceEntry {
@@ -2505,6 +3280,125 @@ mod tests {
     }
 
     #[test]
+    fn migration_declaration_requires_a_strategy_and_entrypoint() {
+        let source = artifact("1.0.0", &["upgrade"]);
+        let target = artifact("2.0.0", &["upgrade"]);
+        let target_schema = schema(
+            2,
+            "ConfigV2",
+            Some(Migration {
+                strategy: " ".into(),
+                entrypoint: None,
+                notes: None,
+            }),
+        );
+        let mut findings = Vec::new();
+        validate_schema_manifests(
+            &source,
+            &target,
+            &schema(1, "ConfigV1", None),
+            &target_schema,
+            &mut findings,
+        );
+
+        assert!(findings.iter().any(|finding| finding.code == "STO013"));
+        assert!(findings.iter().any(|finding| finding.code == "STO014"));
+    }
+
+    #[test]
+    fn history_versions_and_reservations_are_consistent() {
+        let history = SchemaHistory {
+            format_version: 1,
+            complete: true,
+            types: BTreeMap::from([(
+                "OldType".into(),
+                TypeHistory {
+                    fields: BTreeMap::from([
+                        (
+                            "invalid".into(),
+                            HistoricalField {
+                                value_type: serde_json::json!("u32"),
+                                first_seen: "not-semver".into(),
+                                retired_in: None,
+                            },
+                        ),
+                        (
+                            "late".into(),
+                            HistoricalField {
+                                value_type: serde_json::json!("u32"),
+                                first_seen: "2.0.0".into(),
+                                retired_in: Some("1.0.0".into()),
+                            },
+                        ),
+                    ]),
+                    reserved_fields: BTreeSet::from(["unknown".into()]),
+                },
+            )]),
+            source_sha256: "00".repeat(32),
+        };
+        let mut findings = Vec::new();
+        validate_schema_history(
+            &artifact("1.0.0", &["upgrade"]),
+            &artifact("2.0.0", &["upgrade"]),
+            &history,
+            &mut findings,
+        );
+
+        for code in ["HIS013", "HIS014", "HIS015", "HIS016"] {
+            assert!(findings.iter().any(|finding| finding.code == code));
+        }
+    }
+
+    #[test]
+    fn event_removal_and_schema_change_are_blocked() {
+        let mut source = artifact("1.0.0", &["upgrade"]);
+        source.events.insert(
+            "transfer".into(),
+            InterfaceEntry {
+                kind: "event".into(),
+                name: "transfer".into(),
+                canonical: serde_json::json!({"params": ["from", "to"]}),
+            },
+        );
+        let mut changed = artifact("2.0.0", &["upgrade"]);
+        changed.events.insert(
+            "transfer".into(),
+            InterfaceEntry {
+                kind: "event".into(),
+                name: "transfer".into(),
+                canonical: serde_json::json!({"params": ["from", "to", "amount"]}),
+            },
+        );
+        let mut findings = Vec::new();
+        compare_interfaces(
+            &source,
+            &changed,
+            &Policy::default(),
+            &ValidationContext::default(),
+            &mut findings,
+        );
+        assert!(findings.iter().any(|finding| finding.code == "EVT002"));
+
+        findings.clear();
+        compare_interfaces(
+            &source,
+            &artifact("2.0.0", &["upgrade"]),
+            &Policy::default(),
+            &ValidationContext::default(),
+            &mut findings,
+        );
+        assert!(findings.iter().any(|finding| finding.code == "EVT001"));
+    }
+
+    #[test]
+    fn duplicate_spec_members_are_rejected() {
+        assert!(matches!(
+            ensure_unique_spec_members("function", "transfer", ["to".to_owned(), "to".to_owned()],),
+            Err(Error::DuplicateSpecMember { .. })
+        ));
+    }
+
+    #[test]
     fn plan_digest_detects_any_mutation() {
         let mut plan = create_plan(
             safe_report(),
@@ -2559,6 +3453,26 @@ mod tests {
     }
 
     #[test]
+    fn plan_verification_rejects_a_forged_embedded_report() {
+        let mut plan = create_plan(
+            safe_report(),
+            "testnet",
+            TEST_CONTRACT_ID,
+            "deployer",
+            "target.wasm",
+            None,
+        )
+        .unwrap();
+        plan.validation.safe = false;
+        plan.plan_sha256 = calculate_plan_sha256(&plan).unwrap();
+
+        assert!(matches!(
+            verify_plan_digest(&plan),
+            Err(Error::Plan(message)) if message.contains("fresh validation")
+        ));
+    }
+
+    #[test]
     fn plan_rejects_invalid_contract_id() {
         assert!(matches!(
             create_plan(
@@ -2570,6 +3484,22 @@ mod tests {
                 None,
             ),
             Err(Error::InvalidContractId(_))
+        ));
+    }
+
+    #[test]
+    fn plan_rejects_private_source_identity() {
+        let secret = stellar_strkey::ed25519::PrivateKey([7; 32]).to_string();
+        assert!(matches!(
+            create_plan(
+                safe_report(),
+                "testnet",
+                TEST_CONTRACT_ID,
+                &secret,
+                "target.wasm",
+                None,
+            ),
+            Err(Error::Plan(message)) if message.contains("private key")
         ));
     }
 
@@ -2649,16 +3579,101 @@ mod tests {
             report,
             "testnet; echo compromised",
             TEST_CONTRACT_ID,
-            "operator name",
+            "operator",
             "target file.wasm",
             None,
         )
         .unwrap();
-        let upload = &plan.steps[0];
+        let upload = plan
+            .steps
+            .iter()
+            .find(|step| step.kind == PlanStepKind::UploadTargetWasm)
+            .unwrap();
         assert_eq!(upload.program, "stellar");
         assert_eq!(upload.arguments[3], "target file.wasm");
+        assert!(upload
+            .arguments
+            .iter()
+            .any(|argument| argument == "--optimize=false"));
         assert!(upload.command.contains("'target file.wasm'"));
         assert!(upload.command.contains("'testnet; echo compromised'"));
+    }
+
+    #[test]
+    fn plan_rejects_private_key_in_invariant_arguments() {
+        let secret = stellar_strkey::ed25519::PrivateKey([9; 32]).to_string();
+        assert!(matches!(
+            create_plan_with_paths(
+                safe_report(),
+                "testnet",
+                TEST_CONTRACT_ID,
+                "deployer",
+                PlanInputPaths {
+                    source_wasm: "source.wasm".into(),
+                    target_wasm: "target.wasm".into(),
+                    source_schema: "source.schema.json".into(),
+                    target_schema: "target.schema.json".into(),
+                    schema_history: "schema-history.json".into(),
+                    policy: None,
+                },
+                PlanOperations {
+                    migration: None,
+                    invariant_check: InvariantCheck {
+                        program: "verify-upgrade".into(),
+                        arguments: vec![secret],
+                    },
+                },
+            ),
+            Err(Error::Plan(message)) if message.contains("private key")
+        ));
+    }
+
+    #[test]
+    fn public_impact_traversal_stops_at_the_depth_limit() {
+        let mut artifact = artifact("1.0.0", &["read"]);
+        for index in 0..=MAX_PUBLIC_IMPACT_DEPTH + 1 {
+            let name = format!("Type{index}");
+            artifact.user_types.insert(
+                name.clone(),
+                InterfaceEntry {
+                    kind: "struct".into(),
+                    name,
+                    canonical: serde_json::json!({}),
+                },
+            );
+            if index <= MAX_PUBLIC_IMPACT_DEPTH {
+                artifact.type_references.push(TypeReference {
+                    owner_type: format!("Type{index}"),
+                    member: "next".into(),
+                    target_type: format!("Type{}", index + 1),
+                });
+            }
+        }
+
+        let (routes, limited) = routes_to_type(
+            &artifact,
+            "Type0",
+            &format!("Type{}", MAX_PUBLIC_IMPACT_DEPTH + 1),
+        );
+        assert!(routes.is_empty());
+        assert!(limited);
+    }
+
+    #[test]
+    fn named_upgrade_without_host_update_is_blocked() {
+        let mut candidate = artifact("2.0.0", &["upgrade"]);
+        candidate
+            .export_call_evidence
+            .get_mut("upgrade")
+            .unwrap()
+            .host_imports
+            .clear();
+        let mut findings = Vec::new();
+        check_upgrade_host_capability(&candidate, "target", "UPG004", &mut findings);
+
+        assert!(findings
+            .iter()
+            .any(|finding| { finding.code == "UPG004" && finding.severity == Severity::Error }));
     }
 
     #[test]
@@ -2695,6 +3710,11 @@ mod tests {
     #[test]
     fn plan_requires_declared_storage_migration() {
         let mut report = safe_report();
+        report.target_schema.as_mut().unwrap().entries[0].migration = Some(Migration {
+            strategy: "eager".into(),
+            entrypoint: Some("migrate".into()),
+            notes: None,
+        });
         report.findings.push(warning(
             "STO002",
             "migration required",
@@ -2857,6 +3877,53 @@ mod tests {
         assert!(findings
             .iter()
             .any(|finding| finding.severity == Severity::Error));
+    }
+
+    #[test]
+    fn default_policy_blocks_missing_storage_evidence() {
+        let context = ValidationContext {
+            target_protocol_version: Some(27),
+            protocol_source: ProtocolSource::OfflineAssertion,
+            network_name: Some("testnet".into()),
+            ..ValidationContext::default()
+        };
+        let report = validate_with_history(
+            &artifact("1.0.0", &["upgrade"]),
+            &artifact("2.0.0", &["upgrade"]),
+            None,
+            None,
+            &Policy::default(),
+            &context,
+            None,
+        );
+
+        assert!(!report.safe);
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| { finding.code == "STO000" && finding.severity == Severity::Error }));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| { finding.code == "HIS000" && finding.severity == Severity::Error }));
+    }
+
+    #[test]
+    fn environment_protocol_and_prerelease_are_release_gates() {
+        let mut target = artifact("2.0.0", &["upgrade"]);
+        target.env_protocol_version = 28;
+        target.env_pre_release = 1;
+        let context = ValidationContext {
+            target_protocol_version: Some(27),
+            protocol_source: ProtocolSource::OfflineAssertion,
+            network_name: Some("testnet".into()),
+            ..ValidationContext::default()
+        };
+        let mut findings = Vec::new();
+        check_environment_compatibility(&target, &context, &mut findings);
+
+        assert!(findings.iter().any(|finding| finding.code == "ENV001"));
+        assert!(findings.iter().any(|finding| finding.code == "ENV002"));
     }
 
     #[test]
@@ -3058,6 +4125,7 @@ mod tests {
         );
         let history = SchemaHistory {
             format_version: 1,
+            complete: true,
             types: BTreeMap::from([(
                 "Account".into(),
                 TypeHistory {
@@ -3099,6 +4167,7 @@ mod tests {
         );
         let history = SchemaHistory {
             format_version: 1,
+            complete: true,
             types: BTreeMap::from([(
                 "Account".into(),
                 TypeHistory {
@@ -3135,6 +4204,7 @@ mod tests {
             .insert("Account".into(), struct_entry("Account", &[]));
         let history = SchemaHistory {
             format_version: 1,
+            complete: true,
             types: BTreeMap::from([(
                 "Account".into(),
                 TypeHistory {
@@ -3271,7 +4341,8 @@ mod tests {
             );
         }
 
-        let impacts = trace_public_impacts(&source, &target);
+        let (impacts, limited) = trace_public_impacts(&source, &target);
+        assert!(!limited);
         assert_eq!(impacts.len(), 1);
         assert_eq!(impacts[0].changed_type, "Balance");
         assert_eq!(
@@ -3330,7 +4401,8 @@ mod tests {
             );
         }
 
-        let impacts = trace_public_impacts(&source, &target);
+        let (impacts, limited) = trace_public_impacts(&source, &target);
+        assert!(!limited);
         assert_eq!(impacts.len(), 2);
         assert_eq!(impacts[0].steps[0].member, "left");
         assert_eq!(impacts[1].steps[0].member, "right");
