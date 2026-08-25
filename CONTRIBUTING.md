@@ -1,19 +1,46 @@
 # Contributing
 
-The most useful early contributions are real, minimized upgrade fixtures and review of rule semantics.
+Real upgrade fixtures, parser hardening, and clear rule semantics provide the most value.
 
-Before opening a change:
+## Before you open a change
 
-1. do not submit private contract code, keys, or customer data;
-2. state whether the fixture is safe, unsafe, or intentionally ambiguous and why;
-3. include a regression test for every rule change;
-4. document false-positive and backward-compatibility impact;
-5. run the complete local gate.
+1. Do not submit private contract code, keys, customer data, or active exploit details.
+2. State whether each fixture is safe, unsafe, or intentionally uncertain.
+3. Explain the expected finding codes.
+4. Add a regression test for every rule change.
+5. Describe false positive and compatibility effects.
+6. Run the complete release gate.
 
 ```sh
-./scripts/verify-mvp.sh
+./scripts/verify-release.sh
 ```
 
-Compatibility checks should fail closed on unsupported artifacts, protocols, and host capabilities, but warnings and errors must remain actionable. CAP-0086 rule changes need fixtures for protocol activation, actual sparse imports, historical field lifecycle, and cross-contract direction where relevant. There is no unrecorded global force flag: an approved exception belongs in a version-controlled policy and evidence bundle.
+## Rule design
 
-For a crates.io release, package and publish `soroban-upgrades-core` first. Only package and publish `soroban-upgrades-cli` after that exact core version is available in the registry; local source installation resolves the workspace path directly.
+Block unsupported artifacts, protocols, and host capabilities. Keep every error and warning actionable.
+
+Do not convert missing evidence into approval. Use `FACT`, `INFERENCE`, and `UNKNOWN` consistently.
+
+CAP-0086 changes need protocol, import, reachability, history, and cross-contract direction fixtures.
+
+There is no unrecorded global bypass. Put an approved exception in a reviewed policy and evidence bundle.
+
+## Documentation
+
+Use short sentences and direct terms. Keep commands, option names, finding codes, and JSON field names exact.
+
+Document verified behavior and explicit limits. Do not claim Mainnet safety from tests or one Testnet receipt.
+
+## Pull requests
+
+Keep each change focused. Include the problem, release effect, evidence, tests, and remaining limits.
+
+CI runs the full release gate on Linux. It also tests the library and CLI on Linux, macOS, and Windows.
+
+## Package order
+
+Publish `soroban-upgrades-core` before `soroban-upgrades-cli` for a future crates.io release.
+
+Wait until that exact core version exists in the registry. Then package and publish the CLI.
+
+The supported version 1.0.0 distribution uses attested GitHub release binaries.

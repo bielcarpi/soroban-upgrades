@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/bielcarpi/soroban-upgrades/security/advisories/new
+    about: Report an unpatched vulnerability without public disclosure.

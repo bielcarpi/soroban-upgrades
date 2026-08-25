@@ -1,0 +1,52 @@
+name: Bug report
+description: Report incorrect CLI behavior that does not expose an unpatched vulnerability.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include keys, private WASM, customer data, or active exploit details.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Paste the output from soroban-upgrades --version.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Remove private paths and data before you paste the command.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe reproduction
+      description: Provide a public fixture or a minimal synthetic example.
+    validations:
+      required: true

@@ -1,0 +1,34 @@
+name: Validation rule request
+description: Propose a new release hazard or a change to an existing rule.
+title: "rule: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: hazard
+    attributes:
+      label: Release hazard
+      description: Describe the unsafe change and its effect.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Available evidence
+      description: State which evidence comes from WASM, declarations, network data, or runtime tests.
+    validations:
+      required: true
+  - type: textarea
+    id: fixtures
+    attributes:
+      label: Public fixtures
+      description: Link safe and unsafe examples without private code.
+    validations:
+      required: false
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility effect
+      description: Describe false positives and report format effects.
+    validations:
+      required: true

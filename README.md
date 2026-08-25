@@ -1,47 +1,62 @@
 # Soroban Upgrades
 
 [![CI](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml)
-[![Release: v0.1.0-alpha.1](https://img.shields.io/badge/release-v0.1.0--alpha.1-orange.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v0.1.0-alpha.1)
+[![Release: v1.0.0](https://img.shields.io/badge/release-v1.0.0-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.0)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> Catch unsafe Soroban contract upgrades before any signer approves them.
+> Block unsafe Soroban contract upgrades before a signer approves them.
 
-Soroban can replace a contract's WASM while preserving its address and state. **Soroban Upgrades** compares the old and new compiled artifacts, checks the declared storage evolution and migration, verifies protocol assumptions, and produces a deterministic review plan.
+Soroban Upgrades is a production release gate for compiled Soroban contracts. It compares exact WASM files and checks their release evidence.
 
-It brings the safety workflow of OpenZeppelin Upgrades Plugins to Soroban's native upgrade model. It is a CLI and CI gate, not a proxy framework or contract library.
+The gate checks the public interface, storage declarations, schema history, contract version, host interface, protocol evidence, and upgrade path.
 
-Status: unaudited alpha, ready for evaluation and real-world pilots.
+It also creates a deterministic review plan. The plan binds every important release input to a SHA-256 digest.
 
-## Run the MVP
+The CLI never holds keys, signs data, uploads WASM, or submits transactions.
 
-Verified with Rust 1.93.0, the `wasm32v1-none` target, and Stellar CLI 27.1.0.
+## Production status
 
-```sh
-./scripts/showcase.sh
-```
+Version 1.0.0 defines stable policy, report, schema, history, and plan formats. Later 1.x releases keep these formats backward compatible.
 
-The command builds six contracts, runs 45 engine and CLI tests plus eight adversarial Protocol-28 tests, reads the current Testnet protocol, and executes six release decisions:
+The release provides binaries for Linux, macOS, and Windows. GitHub attaches checksums and provenance attestations to the platform archives.
 
-| Scenario | Result |
-| --- | --- |
-| Compatible v1 to v2 migration | `PASS` |
-| ABI, storage, version, and upgrade-path break | `BLOCKED` |
-| Protocol 28 claimed without CAP-0086 imports | `BLOCKED` |
-| Dense and sparse reader/writer runtime matrix | `PROVED` |
-| Rename, retype, and required-field break under protocol 28 | `BLOCKED` |
-| Content-addressed, non-signing release plan | `VERIFIED` |
+The tool is not a security audit. It cannot prove business logic, authorization rules, ledger coverage, or migration completion.
 
-Use `./scripts/showcase.sh --offline` for a reproducible protocol-27 run. The [six scenarios](examples/) explain every artifact pair and expected outcome.
+Read [Security limits](#security-limits) before you use a report for Mainnet approval.
 
-## Try it on a contract
+## Install
 
-Install the CLI from a reviewed checkout:
+The release page provides shell and PowerShell installers.
+
+macOS or Linux:
 
 ```sh
-cargo install --locked --path crates/soroban-upgrades-cli
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.0/soroban-upgrades-cli-installer.sh | sh
 ```
 
-Build both contract versions, keep their storage schemas in version control, and compare the compiled WASM before approval:
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.0/soroban-upgrades-cli-installer.ps1 | iex"
+```
+
+For an approval system, download the platform archive and verify its attestation before extraction:
+
+```sh
+gh release download v1.0.0 \
+  --repo bielcarpi/soroban-upgrades \
+  --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz'
+gh attestation verify \
+  soroban-upgrades-cli-aarch64-apple-darwin.tar.xz \
+  --repo bielcarpi/soroban-upgrades
+```
+
+The CLI needs Stellar CLI for live network checks. Install Stellar CLI 27.1.0 or a compatible later release.
+
+## Validate an upgrade
+
+Build the deployed source version and the candidate version. Keep complete storage declarations and cumulative history in version control.
 
 ```sh
 soroban-upgrades validate \
@@ -52,84 +67,163 @@ soroban-upgrades validate \
   --schema-history schema-history.json \
   --policy policy.json \
   --network testnet \
-  --compact
+  --json > upgrade-report.json
 ```
 
-Compatible upgrades exit zero. Blocked upgrades exit non-zero with stable finding codes. Use `--json` for the complete CI report.
+The command queries the selected network through Stellar CLI. Use `--protocol-version 27` only for an explicit offline assertion.
 
-## Why validate the compiled WASM
+The exit status is part of the public contract:
 
-[Stellar upgrades a contract by the SHA-256 hash of an uploaded WASM](https://developers.stellar.org/docs/build/guides/conventions/upgrading-contracts), not by a source commit. The binary is therefore the release boundary: it contains the interface the ecosystem will call and the code the network will execute.
-
-- **Exact identity:** build flags, dependencies, SDK code generation, and toolchain changes can produce different bytes from similar source.
-- **Published interface:** [Contract Spec XDR](https://developers.stellar.org/docs/tools/sdks/build-your-own#contract-spec-generation) inside the WASM defines the exported functions and user-defined types seen by callers.
-- **Runtime capabilities:** environment metadata, host imports, and direct-call reachability show which capabilities are present, while dynamic dispatch marks where static proof is incomplete.
-- **State continuity:** replacing code does not rewrite existing ledger state; the new WASM must decode it safely or migrate it deliberately.
-- **Upgrade continuity:** the candidate must retain its upgrade path and advance its version.
-
-Source review explains intent. Artifact validation checks the exact candidate that will be uploaded, approved, and later fetched from the ledger.
-
-## What it checks
-
-| Surface | Evidence checked |
+| Status | Meaning |
 | --- | --- |
-| Compiled WASM | Artifact hashes, Soroban spec, metadata, host imports, exports, and public types |
-| Compatibility | Functions, nested public impact, retained upgrade entrypoint, and increasing SEP-49 `binver` |
-| Storage | Versioned schemas, field history, retired names, migrations, and type-reuse hazards |
-| Protocol | Live network version and whether the candidate actually imports the capability it claims |
-| Reporting | Machine-readable findings labeled as fact, inference, or unknown |
-| Release plan | Canonical artifact, policy, migration, network, verification, and rollback steps |
+| `0` | The configured gate passed. Review warnings and unknown evidence. |
+| `2` | One or more release-blocking findings exist. |
+| `1` | Input, parsing, filesystem, or network operation failed. |
 
-The plan is read-only. The MVP never holds keys, signs, uploads, or submits transactions.
+The default policy fails closed without both storage schemas and complete schema history.
 
-## Where CAP-0086 fits
+Use `--compact` for a short log. Use `--json` to keep the complete evidence report.
 
-[CAP-0086](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md) adds sparse Symbol-keyed map functions in protocol 28. This can make additions such as optional fields safer, but it cannot decide whether a compiled replacement preserves its ABI, storage history, upgrade path, or migration requirements.
+## Use the GitHub Action
 
-The [CAP discussion](https://github.com/orgs/stellar/discussions/1877) identifies field-lifecycle checks as tooling work comparable to `cargo-semver`. This MVP checks the compiled candidate instead of assuming that protocol 28 or a source-level claim proves CAP-0086 compatibility.
+The action downloads the release archive and verifies its GitHub attestation. It writes the report before it returns status `2`.
 
-## How it complements OpenZeppelin
+```yaml
+- uses: bielcarpi/soroban-upgrades@v1.0.0
+  with:
+    from: artifacts/old.wasm
+    to: artifacts/new.wasm
+    from-schema: upgrade/old.schema.json
+    to-schema: upgrade/new.schema.json
+    schema-history: upgrade/schema-history.json
+    policy: upgrade/policy.json
+    network: testnet
+    report: artifacts/soroban-upgrade-report.json
+```
 
-| Layer | Role |
+Pin the action to the full release tag or its commit SHA. Upload the JSON report as a separate workflow artifact.
+
+## Create a review plan
+
+Create the plan only after validation passes. A live plan also verifies the current contract executable against the source WASM.
+
+```sh
+soroban-upgrades plan \
+  --from old.wasm \
+  --to new.wasm \
+  --from-schema old.schema.json \
+  --to-schema new.schema.json \
+  --schema-history schema-history.json \
+  --policy policy.json \
+  --network testnet \
+  --contract-id "$CONTRACT_ID" \
+  --source-identity release-signer \
+  --migration-entrypoint migrate \
+  --migration-arg operator=release-signer \
+  --invariant-program ./verify-upgrade.sh \
+  --out upgrade.plan.json
+```
+
+The plan uploads the exact reviewed bytes with `--optimize=false`. The candidate hash therefore remains the release boundary.
+
+Run the final verification immediately before signer review:
+
+```sh
+soroban-upgrades verify-plan --plan upgrade.plan.json
+```
+
+This command verifies the report, digest, local artifacts, policy, schemas, history, network, protocol, and current deployed executable.
+
+An offline plan has `offline_draft` status. Only a live plan can have `review_ready` status.
+
+Read the [CLI reference](docs/CLI.md) for every command and option.
+
+## What the gate checks
+
+| Surface | Evidence |
 | --- | --- |
-| Soroban | Executes same-address WASM replacement |
-| [OpenZeppelin Stellar Contracts](https://docs.openzeppelin.com/stellar-contracts/utils/upgradeable) | Provides an upgrade entrypoint, schema-version helpers, and migration patterns |
-| [OpenZeppelin EVM Upgrades](https://docs.openzeppelin.com/upgrades-plugins/api-core) | Validates Solidity proxy upgrades from Hardhat or Foundry build data |
-| **Soroban Upgrades** | Validates Soroban WASM compatibility and produces reviewable release evidence before approval |
+| WASM identity | Exact bytes, size limits, format validity, and SHA-256 digest |
+| Host interface | Embedded protocol version, prerelease value, imports, and export reachability |
+| Public interface | Functions, arguments, results, contract events, public types, and nested type impact |
+| Upgrade path | Compatible signature and direct compiled reachability to Stellar’s WASM update host function |
+| Version | Increasing semantic `binver` metadata |
+| Storage | Complete source and target declarations, migration data, and version links |
+| History | Retired names, field types, first release, and reserved names |
+| Protocol | Live network identity or an explicit offline assertion |
+| CAP-0086 | Protocol activation, sparse imports, call reachability, and known proof limits |
+| Plan | Canonical commands, exact inputs, local artifacts, and fresh network evidence |
 
-OpenZeppelin's EVM tooling does not parse Soroban WASM, Contract Spec XDR, SEP-49 metadata, CAP-0086 imports, or Stellar network evidence. This project fills that Soroban-specific gap without replacing OpenZeppelin's contract primitives.
+The parser rejects unknown JSON fields, duplicate JSON fields, malformed WASM, oversized inputs, and unsupported format versions.
 
-## Verified Testnet upgrade
+The impact traversal has fixed depth, path, and step limits. A limit breach creates blocking finding `RES001`.
 
-On 5 August 2026, the [reference contract](https://lab.stellar.org/r/testnet/contract/CAVRSELEZ6PAWEXGHPGNQ3VHI4LDT5QUA5MZWSMXYQLE7HACO6G3TUMJ) was upgraded at the same address. The successful [`executable_update` transaction](https://stellar.expert/explorer/testnet/tx/f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda) at ledger `3,985,019` binds the old WASM `c30ddc...c6a8` to the reviewed target `1494bf...d9e`.
+## How it works with OpenZeppelin
 
-After migration, the preserved counter returned `2`, the new `paused` function returned `false`, and the fetched on-chain WASM hashed to the reviewed target. This is historical Testnet execution evidence, not external adoption or Mainnet readiness.
+[OpenZeppelin Stellar Contracts](https://docs.openzeppelin.com/stellar-contracts/utils/upgradeable) provides the on-chain upgrade entrypoint and migration patterns.
 
-## Roadmap
+Soroban Upgrades checks the compiled release before that entrypoint receives approval. It does not replace OpenZeppelin contract components.
 
-The MVP proves the core release decision. The roadmap turns it into a supported lifecycle toolchain covering artifact validation, state rehearsal, controlled rollout, and on-chain evidence.
+The planner requires this compatible signature:
 
-### 1. Validator v1
+```text
+upgrade(new_wasm_hash: BytesN<32>, operator: Address)
+```
 
-- **Engine:** stabilize the policy, schema, report, and plan formats; normalize ABI, SEP-49, protocol, SDK, and CAP-0086 rules.
-- **Validation:** add fuzzing, malformed-input and resource-limit tests, reviewed exceptions, and a public adversarial corpus.
-- **Distribution:** publish a reusable GitHub Action, stable crates, cross-platform binaries with signed checksums, and a supported release matrix.
-- **Acceptance:** reproduce every supported fixture from a clean checkout, block every labeled critical corpus hazard, and prevent malformed input from panicking or bypassing a failing rule.
+OpenZeppelin does not verify constructor behavior, future upgrade access, or storage consistency for each replacement. This gate checks those release concerns.
 
-### 2. State rehearsal and Testnet pilots
+Read the [adoption guide](docs/ADOPTION.md) for a complete contract setup.
 
-- **State model:** generate storage manifests, sample ledger snapshots, and compare current schemas with cumulative field history.
-- **Rehearsal:** execute eager, lazy, paused, atomic, and rollback migrations with invariant, coverage, and resource reports.
-- **Rollout:** add dependency-aware sequencing, policy-bound Stellar CLI workflows, and three external Testnet pilots.
-- **Acceptance:** detect every labeled state break, reject substituted artifacts or current executables, and record before-and-after invariants for each pilot.
+## CAP-0086
 
-### 3. Production evidence
+[CAP-0086](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md) adds sparse Symbol-keyed map functions in protocol 28.
 
-- **Monitoring:** match `executable_update` events and fetched WASM to the reviewed artifact and canonical plan.
-- **Operations:** produce portable evidence bundles covering approval, simulation, execution, migration, invariants, and rollback.
-- **Release:** ship stable v1 crates and binaries, a controlled Mainnet reference upgrade, and five verified external integrations in total.
-- **Acceptance:** reproduce every tagged binary, detect synthetic event or hash mismatches, and publish the result and unresolved limits of each integration.
+Sparse decoding can support some optional-field changes. It does not make field renames, type changes, or required-field changes safe.
+
+The gate checks the compiled imports and reachable calls. It reports per-type reader binding as unknown without stronger external evidence.
+
+The [runtime witness](experiments/cap0086-runtime/) tests safe and unsafe reader and writer directions against host version 28.0.1.
+
+## Historical Testnet evidence
+
+On 5 August 2026, the reference contract kept its address and state through a Testnet WASM replacement.
+
+The [`executable_update` transaction](https://stellar.expert/explorer/testnet/tx/f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda) occurred at ledger `3,985,019`.
+
+The fetched executable matched the reviewed target hash. The preserved counter returned `2`, and the new `paused` function returned `false`.
+
+This receipt proves one historical Testnet execution. It does not prove external adoption or Mainnet safety.
+
+## Security limits
+
+Treat `PASS` as one release gate, not as a security guarantee.
+
+The gate does not observe these facts without external evidence:
+
+- all deployed callers and their decoding behavior
+- every historical ledger entry
+- completion of an eager or lazy migration
+- application authorization and signer policy
+- business invariants and economic safety
+- rollback compatibility after storage mutation
+
+Upgrade and migration steps use separate transactions. Pause external access or use an authorized atomic design when the gap creates risk.
+
+Do not treat the previous WASM hash as a verified rollback. Rehearse rollback against the post-migration storage state.
+
+Read [SECURITY.md](SECURITY.md) to report a vulnerability. Do not place private contracts, keys, or Mainnet exploit details in an issue.
+
+## Verify this repository
+
+Install Rust 1.93.0, target `wasm32v1-none`, Stellar CLI 27.1.0, `cargo-audit` 0.22.2, and `actionlint` 1.7.12.
+
+```sh
+./scripts/verify-release.sh
+```
+
+The gate formats and lints the workspace. It also runs tests, builds all fixtures, verifies CAP-0086 evidence, packages the core, and audits dependencies.
+
+See [Upgrade scenarios](examples/) for the accepted and blocked fixtures. See [Release process](docs/RELEASE.md) for distribution controls.
 
 ## License
 
-Apache-2.0. The engine, CLI, schemas, fixtures, and documentation are open source.
+Apache-2.0. The engine, CLI, schemas, fixtures, action, and documentation are open source.
