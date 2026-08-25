@@ -1,6 +1,8 @@
 # CLI reference
 
-This reference describes Soroban Upgrades 1.0.5. All JSON input parsers reject unknown fields and duplicate fields.
+This reference covers stable major version 1. The CLI is read-only and does not execute generated plan commands.
+
+All JSON input parsers reject unknown fields and duplicate fields.
 
 ## Exit status
 

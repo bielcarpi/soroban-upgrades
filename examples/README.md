@@ -1,6 +1,6 @@
 # Upgrade scenarios
 
-These scenarios turn the compatibility model into release decisions.
+These scenarios turn the compatibility model into checker results.
 
 The showcase rebuilds every contract fixture. Each result comes from compiled WASM instead of stored output.
 
@@ -10,7 +10,7 @@ Run the complete sequence from the repository root:
 ./scripts/showcase.sh
 ```
 
-Use `./scripts/showcase.sh --offline` when a live Testnet protocol read is unavailable.
+If a live Testnet protocol read is unavailable, use `./scripts/showcase.sh --offline`.
 
 The offline mode records its protocol value as an assertion rather than network evidence.
 
@@ -37,7 +37,7 @@ Fixtures: [`counter-v1`](counter-v1/) and [`counter-v2`](counter-v2/).
 
 The candidate combines several hazards. These include interface breaks, storage breaks, missing history, a non-increasing version, and loss of future upgrades.
 
-The release gate must return a failing process status.
+The checker must return status `2`.
 
 Fixtures: [`counter-v1`](counter-v1/) and [`counter-unsafe`](counter-unsafe/).
 
@@ -71,7 +71,7 @@ The validator blocks those breaks under an asserted protocol 28.
 
 Fixtures: [`cap86-v2`](cap86-v2/) and [`cap86-unsafe`](cap86-unsafe/).
 
-## 6. Content-addressed release plan
+## 6. Content-addressed review plan
 
 The safe pair creates a deterministic plan for upload, simulation, upgrade, migration, executable verification, and application invariants.
 

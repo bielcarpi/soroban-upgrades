@@ -1,76 +1,44 @@
 # Soroban Upgrades
 
 [![CI](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml)
-[![Release: v1.0.5](https://img.shields.io/badge/release-v1.0.5-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.5)
+[![Release: v1.0.6](https://img.shields.io/badge/release-v1.0.6-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.6)
 [![crates.io](https://img.shields.io/crates/v/soroban-upgrades-cli.svg)](https://crates.io/crates/soroban-upgrades-cli)
 [![docs.rs: core](https://docs.rs/soroban-upgrades-core/badge.svg)](https://docs.rs/soroban-upgrades-core)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/bielcarpi/soroban-upgrades/blob/main/LICENSE)
 
-> Check Soroban contract upgrades before a signer approves them.
+> Check compiled Soroban contract upgrades before a signer approves them.
 
-Soroban Upgrades is an independent checker for compiled Soroban contract upgrades. It compares exact WASM files and checks their release evidence.
+Soroban Upgrades compares the deployed WASM with a candidate WASM. It finds incompatible changes and records the evidence in a stable report.
 
-The checker examines the public interface, storage declarations, schema history, contract version, host interface, protocol evidence, and upgrade path.
+The checker is read-only. It never holds keys, signs data, uploads WASM, deploys contracts, or submits transactions.
 
-It can also create a deterministic review plan. The plan binds every important release input to a SHA-256 digest.
+## What it checks
 
-The CLI does not deploy contracts or execute the review plan. You can deploy a contract without this tool.
+- WASM identity and Stellar host-interface compatibility
+- functions, events, public types, and upgrade-entrypoint reachability
+- storage declarations, schema history, migrations, and contract versions
+- live network identity, protocol support, and the current deployed executable
+- deterministic review plans that bind each input to a SHA-256 digest
 
-The CLI never holds keys, signs data, uploads WASM, or submits transactions.
+A `PASS` result means that the configured checks passed. It is not a contract audit or a security guarantee.
 
-## Production status
-
-Version 1.0.5 uses the stable policy, report, schema, history, and plan formats from 1.0.4. Later 1.x releases keep these formats backward compatible.
-
-The release provides binaries for Linux, macOS, and Windows. GitHub attaches checksums and provenance attestations to the platform archives.
-
-The [CLI](https://crates.io/crates/soroban-upgrades-cli) and [core library](https://crates.io/crates/soroban-upgrades-core) are available on crates.io. Future releases use short-lived credentials through trusted publishing.
-
-The release workflow tests the published action before publication. GitHub then locks the release tag and assets against later changes.
-
-The tool is not a security audit. It cannot prove business logic, authorization rules, ledger coverage, or migration completion.
-
-Read [Security limits](#security-limits) before you use a report for Mainnet approval.
+Read [Checks and evidence](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/CHECKS.md) for the complete scope and limits.
 
 ## Install
 
-Install the pinned release from crates.io. This method needs Rust 1.93 or later.
+Install the pinned release from crates.io with Rust 1.93 or later:
 
 ```sh
-cargo install soroban-upgrades-cli --version 1.0.5 --locked
+cargo install soroban-upgrades-cli --version 1.0.6 --locked
 ```
 
-The release page also provides prebuilt shell and PowerShell installers. These installers do not need a Rust toolchain.
+Prebuilt binaries are available for Linux, macOS, and Windows. Read the [installation guide](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/INSTALL.md) for installers and provenance checks.
 
-macOS or Linux:
+Live network checks also need [Stellar CLI](https://developers.stellar.org/docs/tools/cli).
 
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.5/soroban-upgrades-cli-installer.sh | sh
-```
+## Quick start
 
-Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.5/soroban-upgrades-cli-installer.ps1 | iex"
-```
-
-For an approval system, download the platform archive and verify its attestation before extraction:
-
-```sh
-gh release download v1.0.5 \
-  --repo bielcarpi/soroban-upgrades \
-  --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz'
-gh attestation verify \
-  soroban-upgrades-cli-aarch64-apple-darwin.tar.xz \
-  --repo bielcarpi/soroban-upgrades
-```
-
-The CLI needs Stellar CLI for live network checks. Install Stellar CLI 27.1.0 or a compatible later release.
-
-## Validate an upgrade
-
-Build the deployed source version and the candidate version. Keep complete storage declarations and cumulative history in version control.
+Compare two compiled contracts with complete storage and history evidence:
 
 ```sh
 soroban-upgrades validate \
@@ -79,155 +47,64 @@ soroban-upgrades validate \
   --from-schema old.schema.json \
   --to-schema new.schema.json \
   --schema-history schema-history.json \
-  --policy policy.json \
   --network testnet \
   --json > upgrade-report.json
 ```
 
-The command queries the selected network through Stellar CLI. Use `--protocol-version 27` only for an explicit offline assertion.
-
-The exit status is part of the public contract:
-
-| Status | Meaning |
+| Status | Result |
 | --- | --- |
-| `0` | The configured gate passed. Review warnings and unknown evidence. |
-| `2` | One or more release-blocking findings exist. |
-| `1` | Input, parsing, filesystem, or network operation failed. |
+| `0` | The configured checks passed. |
+| `2` | The checker found a blocking change. |
+| `1` | An input, parser, file, or network operation failed. |
 
-The default policy fails closed without both storage schemas and complete schema history.
+Use `--compact` for a short CI log. Use `--json` to keep the complete report.
 
-Use `--compact` for a short log. Use `--json` to keep the complete evidence report.
+Run the repository showcase to see accepted and blocked upgrades:
 
-## Use the GitHub Action
+```sh
+git clone https://github.com/bielcarpi/soroban-upgrades.git
+cd soroban-upgrades
+./scripts/showcase.sh --offline
+```
 
-The action downloads the release archive and verifies its GitHub attestation. It writes the report before it returns status `2`.
+## GitHub Action
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.5
+- uses: bielcarpi/soroban-upgrades@v1.0.6
   with:
     from: artifacts/old.wasm
     to: artifacts/new.wasm
     from-schema: upgrade/old.schema.json
     to-schema: upgrade/new.schema.json
     schema-history: upgrade/schema-history.json
-    policy: upgrade/policy.json
     network: testnet
     report: artifacts/soroban-upgrade-report.json
 ```
 
-Pin the action to the full release tag or its commit SHA. Upload the JSON report as a separate workflow artifact.
+The action writes the report before it returns status `2`. Pin the action to a release tag or commit SHA.
 
-## Create a review plan
+## Documentation
 
-Create the plan only after validation passes. A live plan also verifies the current contract executable against the source WASM.
+- [Installation and release verification](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/INSTALL.md)
+- [CLI reference](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/CLI.md)
+- [Checks and evidence](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/CHECKS.md)
+- [Adoption guide](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/ADOPTION.md)
+- [Upgrade scenarios](https://github.com/bielcarpi/soroban-upgrades/blob/main/examples/README.md)
+- [Security policy and limits](https://github.com/bielcarpi/soroban-upgrades/blob/main/SECURITY.md)
+- [Release process](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/RELEASE.md)
 
-```sh
-soroban-upgrades plan \
-  --from old.wasm \
-  --to new.wasm \
-  --from-schema old.schema.json \
-  --to-schema new.schema.json \
-  --schema-history schema-history.json \
-  --policy policy.json \
-  --network testnet \
-  --contract-id "$CONTRACT_ID" \
-  --source-identity release-signer \
-  --migration-entrypoint migrate \
-  --migration-arg operator=release-signer \
-  --invariant-program ./verify-upgrade.sh \
-  --out upgrade.plan.json
-```
+Version 1.x keeps the policy, report, schema, history, plan, and finding-code formats backward compatible.
 
-The plan uploads the exact reviewed bytes with `--optimize=false`. The candidate hash therefore remains the release boundary.
+## Development
 
-Run the final verification immediately before signer review:
-
-```sh
-soroban-upgrades verify-plan --plan upgrade.plan.json
-```
-
-This command verifies the report, digest, local artifacts, policy, schemas, history, network, protocol, and current deployed executable.
-
-An offline plan has `offline_draft` status. Only a live plan can have `review_ready` status.
-
-Read the [CLI reference](docs/CLI.md) for every command and option.
-
-## What the gate checks
-
-| Surface | Evidence |
-| --- | --- |
-| WASM identity | Exact bytes, size limits, format validity, and SHA-256 digest |
-| Host interface | Embedded protocol version, prerelease value, imports, and export reachability |
-| Public interface | Functions, arguments, results, contract events, public types, and nested type impact |
-| Upgrade path | Compatible signature and direct compiled reachability to Stellar’s WASM update host function |
-| Version | Increasing semantic `binver` metadata |
-| Storage | Complete source and target declarations, migration data, and version links |
-| History | Retired names, field types, first release, and reserved names |
-| Protocol | Live network identity or an explicit offline assertion |
-| CAP-0086 | Protocol activation, sparse imports, call reachability, and known proof limits |
-| Plan | Canonical commands, exact inputs, local artifacts, and fresh network evidence |
-
-The parser rejects unknown JSON fields, duplicate JSON fields, malformed WASM, oversized inputs, and unsupported format versions.
-
-The impact traversal has fixed depth, path, and step limits. A limit breach creates blocking finding `RES001`.
-
-## How it works with OpenZeppelin
-
-[OpenZeppelin Stellar Contracts](https://docs.openzeppelin.com/stellar-contracts/utils/upgradeable) provides the on-chain upgrade entrypoint and migration patterns.
-
-Soroban Upgrades checks the compiled release before that entrypoint receives approval. It does not replace OpenZeppelin contract components.
-
-The planner requires this compatible signature:
-
-```text
-upgrade(new_wasm_hash: BytesN<32>, operator: Address)
-```
-
-OpenZeppelin does not verify constructor behavior, future upgrade access, or storage consistency for each replacement. This gate checks those release concerns.
-
-Read the [adoption guide](docs/ADOPTION.md) for a complete contract setup.
-
-## CAP-0086
-
-[CAP-0086](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md) adds sparse Symbol-keyed map functions in protocol 28.
-
-Sparse decoding can support some optional-field changes. It does not make field renames, type changes, or required-field changes safe.
-
-The gate checks the compiled imports and reachable calls. It reports per-type reader binding as unknown without stronger external evidence.
-
-The [runtime witness](experiments/cap0086-runtime/) tests safe and unsafe reader and writer directions against host version 28.0.1.
-
-## Security limits
-
-A `PASS` result means that the configured checks passed. It is not a security guarantee.
-
-The checker does not observe these facts without external evidence:
-
-- all deployed callers and their decoding behavior
-- every historical ledger entry
-- completion of an eager or lazy migration
-- application authorization and signer policy
-- business invariants and economic safety
-- rollback compatibility after storage mutation
-
-Upgrade and migration steps use separate transactions. Pause external access or use an authorized atomic design when the gap creates risk.
-
-Do not treat the previous WASM hash as a verified rollback. Rehearse rollback against the post-migration storage state.
-
-Read [SECURITY.md](SECURITY.md) to report a vulnerability. Do not place private contracts, keys, or Mainnet exploit details in an issue.
-
-## Verify this repository
-
-Install Rust 1.93.0, target `wasm32v1-none`, Stellar CLI 27.1.0, `cargo-audit` 0.22.2, and `actionlint` 1.7.12.
+Run the complete repository gate:
 
 ```sh
 ./scripts/verify-release.sh
 ```
 
-The gate formats and lints the workspace. It also runs tests, builds all fixtures, verifies CAP-0086 evidence, packages the core, and audits dependencies.
-
-See [Upgrade scenarios](examples/) for the accepted and blocked fixtures. See [Release process](docs/RELEASE.md) for distribution controls.
+Read [CONTRIBUTING.md](https://github.com/bielcarpi/soroban-upgrades/blob/main/CONTRIBUTING.md) before you submit a change.
 
 ## License
 
-Apache-2.0. The engine, CLI, schemas, fixtures, action, and documentation are open source.
+Apache-2.0

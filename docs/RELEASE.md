@@ -35,7 +35,7 @@ Verify the distribution plan:
 dist plan --output-format=json > dist-plan.json
 ```
 
-Review all target runners and artifact names. Version 1.0.5 supports these targets:
+Review all target runners and artifact names. Stable releases support these targets:
 
 - ARM64 macOS
 - x64 macOS

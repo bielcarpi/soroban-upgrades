@@ -43,4 +43,4 @@ Publish `soroban-upgrades-core` before `soroban-upgrades-cli` for a future crate
 
 Wait until that exact core version exists in the registry. Then package and publish the CLI.
 
-The supported version 1.0.5 distribution uses attested GitHub release binaries.
+Published distributions use attested GitHub release binaries.

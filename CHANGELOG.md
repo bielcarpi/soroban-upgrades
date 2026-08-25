@@ -2,6 +2,26 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
+## 1.0.6 (2026-08-25)
+
+This documentation release makes the public entry points faster to scan and easier to use.
+
+### Added
+
+- A focused installation and provenance guide.
+- A focused reference for checker scope, evidence, and limits.
+
+### Changed
+
+- The README now leads with one purpose, one install command, one validation example, and the GitHub Action.
+- Detailed checks, CAP-0086 behavior, OpenZeppelin compatibility, and archive verification now live in focused documents.
+- The adoption guide now stops at signer review and separates checker evidence from deployment approval.
+- Public wording now uses checker terms consistently.
+
+### Compatibility
+
+- Version 1.0.6 does not change CLI behavior or stable JSON formats.
+
 ## 1.0.5 (2026-08-25)
 
 This maintenance release clarifies the product scope and completes the crates.io release path.

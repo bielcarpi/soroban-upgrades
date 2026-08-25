@@ -1,6 +1,6 @@
 # Adoption guide
 
-Use this guide to add Soroban Upgrades to an existing contract release process.
+Use this guide to add Soroban Upgrades before signer review. The checker does not deploy contracts or execute its plans.
 
 ## 1. Prepare the contract
 
@@ -64,12 +64,12 @@ Keep the policy in the contract repository. Review policy changes like source ch
 
 There is no global bypass flag. A permitted compatibility change belongs in a reviewed policy version or a new major tool version.
 
-## 5. Add the CI gate
+## 5. Add CI checks
 
 Build both artifacts before validation. Use the same release toolchain for the candidate that you use for upload.
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.5
+- uses: bielcarpi/soroban-upgrades@v1.0.6
   with:
     from: artifacts/deployed.wasm
     to: artifacts/candidate.wasm
@@ -83,9 +83,9 @@ Build both artifacts before validation. Use the same release toolchain for the c
 
 Keep the JSON report with the build evidence. Also keep both artifact hashes and the candidate toolchain version.
 
-Use a full action tag or commit SHA. Do not use a moving branch for a release gate.
+Use a full action tag or commit SHA. Do not use a moving branch for approval checks.
 
-## 6. Prepare the live plan
+## 6. Prepare a live review plan
 
 Fetch the deployed WASM before planning. Compare its hash with the source artifact in your release workspace.
 
@@ -103,41 +103,21 @@ Useful invariant checks include:
 
 Create the live plan with the real network, contract, signer alias, migration arguments, and invariant program.
 
-Run `verify-plan` immediately before signer review. Reject the release after any live evidence change.
+Run `verify-plan` immediately before signer review. Create a new plan after any live evidence change.
 
-## 7. Control execution
+## 7. Review the result
 
-Review each command and expected result in the plan. Do not execute the `command` text through an automatic shell without separate approval.
+Review each finding, command, and expected result. Do not send the plan command text to an automatic shell.
 
-The standard plan uses separate upgrade and migration transactions. This creates a temporary state between both transactions.
+The checker result is one input to signer review. It is not deployment approval.
 
-Pause public access before the upgrade when that state is unsafe. Otherwise, use an authorized atomic upgrade and migration design.
-
-Verify the upload result against the target hash. The plan disables Stellar CLI optimization during upload.
-
-After execution, fetch the deployed WASM again. Verify its hash before you run the final invariant program.
-
-Keep the transaction hash, event, fetched artifact, invariant result, report, and plan in one release evidence bundle.
-
-## 8. Rehearse failure and rollback
-
-The previous WASM hash is only a rollback candidate. Storage changes can make the previous code unable to decode the new state.
-
-Rehearse rollback against the post-migration state. Record the required pause, migration reversal, signer, and time limits.
-
-Do not approve a rollback claim from the previous hash alone.
-
-## Approval gate
-
-Approve a production release only after all items pass:
+Before signer review, make sure that these checker conditions are true:
 
 - The CI report has status `0`.
-- A reviewer resolved every warning and unknown evidence item.
+- A reviewer resolved each warning and unknown evidence item.
 - The deployed executable matches the plan source hash.
-- The candidate archive and CLI archive have verified provenance.
-- The plan has `review_ready` status.
-- The signer identity and authorization policy are correct.
-- Upgrade and migration simulations passed with expected resources.
-- The application invariant program passed in rehearsal.
-- The rollback rehearsal covers the post-migration storage state.
-- The release evidence bundle has a durable location.
+- The candidate archive and CLI archive have valid provenance.
+- The live plan has `review_ready` status.
+- The plan still matches every local file and live-network input.
+
+Your deployment process must separately cover signer authorization, transaction simulation, migration behavior, application invariants, and rollback safety.
