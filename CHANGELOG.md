@@ -2,7 +2,7 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
-## 1.0.0 (2026-08-25)
+## 1.0.1 (2026-08-25)
 
 First stable production release.
 
@@ -43,6 +43,12 @@ First stable production release.
 - Storage coverage, deployed callers, migration completion, and business invariants need external evidence.
 - Upgrade and migration commands use separate transactions.
 - A previous WASM hash alone does not prove rollback safety.
+
+## 1.0.0 (unpublished)
+
+The draft smoke test stopped publication because standard release download does not expose draft assets.
+
+Version 1.0.1 adds an attested draft-archive path for the release smoke test.
 
 ## 0.1.0-alpha.1 (2026-08-06)
 

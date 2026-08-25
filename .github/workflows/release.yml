@@ -346,6 +346,7 @@ jobs:
   release-smoke:
     name: Verify the published action and binary
     needs:
+      - plan
       - host
     if: ${{ always() && needs.host.result == 'success' }}
     runs-on: ubuntu-latest
@@ -368,10 +369,29 @@ jobs:
         run: |
           stellar contract build --package counter-v1
           stellar contract build --package counter-v2
+      - name: Download the draft release archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          ARCHIVE_NAME: soroban-upgrades-cli-x86_64-unknown-linux-gnu.tar.xz
+        run: |
+          set -euo pipefail
+          asset_id="$(gh api --paginate repos/bielcarpi/soroban-upgrades/releases \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\" and .draft == true) | .assets[] | select(.name == \"$ARCHIVE_NAME\") | .id" \
+            | head -n 1)"
+          if [[ -z "$asset_id" ]]; then
+            echo "The draft release archive was not found." >&2
+            exit 1
+          fi
+          gh api \
+            -H "Accept: application/octet-stream" \
+            "repos/bielcarpi/soroban-upgrades/releases/assets/$asset_id" \
+            > "target/$ARCHIVE_NAME"
       - name: Run the published action
         uses: ./
         with:
-          version: 1.0.0
+          version: ${{ fromJson(needs.plan.outputs.val).releases[0].app_version }}
+          archive-path: target/soroban-upgrades-cli-x86_64-unknown-linux-gnu.tar.xz
           from: target/wasm32v1-none/release/counter_v1.wasm
           to: target/wasm32v1-none/release/counter_v2.wasm
           from-schema: examples/schemas/counter-v1.schema.json
@@ -381,8 +401,11 @@ jobs:
           protocol-version: 27
           report: target/release-smoke-report.json
       - name: Verify the report
+        env:
+          RELEASE_VERSION: ${{ fromJson(needs.plan.outputs.val).releases[0].app_version }}
         run: |
-          jq -e '.safe == true and .toolVersion == "1.0.0"' \
+          jq -e --arg version "$RELEASE_VERSION" \
+            '.safe == true and .toolVersion == $version' \
             target/release-smoke-report.json
 
   announce:

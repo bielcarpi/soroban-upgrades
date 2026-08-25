@@ -6,7 +6,11 @@ inputs:
   version:
     description: Soroban Upgrades release version without the v prefix.
     required: false
-    default: "1.0.0"
+    default: "1.0.1"
+  archive-path:
+    description: Optional path to a downloaded platform archive. The action still verifies its GitHub attestation.
+    required: false
+    default: ""
   from:
     description: Path to the deployed source WASM.
     required: true
@@ -47,6 +51,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         INPUT_VERSION: ${{ inputs.version }}
+        INPUT_ARCHIVE_PATH: ${{ inputs.archive-path }}
       run: |
         set -euo pipefail
         if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
@@ -74,17 +79,31 @@ runs:
           archive="soroban-upgrades-cli-${target}.tar.xz"
         fi
 
-        gh release download "v${INPUT_VERSION}" \
-          --repo bielcarpi/soroban-upgrades \
-          --pattern "$archive" \
-          --dir "$task_dir"
-        gh attestation verify "$task_dir/$archive" \
+        if [[ -n "$INPUT_ARCHIVE_PATH" ]]; then
+          if [[ ! -f "$INPUT_ARCHIVE_PATH" ]]; then
+            echo "The supplied release archive does not exist: $INPUT_ARCHIVE_PATH" >&2
+            exit 1
+          fi
+          if [[ "$(basename "$INPUT_ARCHIVE_PATH")" != "$archive" ]]; then
+            echo "The supplied archive does not match this runner: $archive" >&2
+            exit 1
+          fi
+          archive_path="$INPUT_ARCHIVE_PATH"
+        else
+          archive_path="$task_dir/$archive"
+          gh release download "v${INPUT_VERSION}" \
+            --repo bielcarpi/soroban-upgrades \
+            --pattern "$archive" \
+            --dir "$task_dir"
+        fi
+
+        gh attestation verify "$archive_path" \
           --repo bielcarpi/soroban-upgrades
 
         if [[ "$archive" == *.zip ]]; then
-          unzip -q "$task_dir/$archive" -d "$task_dir/bin"
+          unzip -q "$archive_path" -d "$task_dir/bin"
         else
-          tar -xJf "$task_dir/$archive" -C "$task_dir/bin"
+          tar -xJf "$archive_path" -C "$task_dir/bin"
         fi
         binary="$(find "$task_dir/bin" -type f \( -name soroban-upgrades -o -name soroban-upgrades.exe \) -print -quit)"
         if [[ -z "$binary" ]]; then
