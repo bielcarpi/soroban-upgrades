@@ -36,7 +36,7 @@ jobs:
         env:
           ACTIONLINT_VERSION: 1.7.12
         run: |
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_x86_64.tar.gz"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           checksums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
           curl --proto '=https' --tlsv1.2 -LsSf \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
