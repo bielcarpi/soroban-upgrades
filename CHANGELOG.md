@@ -2,6 +2,25 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
+## 1.0.5 (2026-08-25)
+
+This maintenance release clarifies the product scope and completes the crates.io release path.
+
+### Added
+
+- Trusted Publishing for the core library and CLI.
+- A pinned Cargo installation command in the README.
+
+### Changed
+
+- The product description now identifies Soroban Upgrades as an independent checker.
+- The documentation states that the tool does not deploy contracts or execute review plans.
+- The GitHub Action and crates.io package descriptions now use checking terms.
+
+### Removed
+
+- Launch evidence that did not measure the checker.
+
 ## 1.0.4 (2026-08-25)
 
 First stable production release.
@@ -10,6 +29,7 @@ First stable production release.
 
 - Stable JSON Schemas for artifacts, policies, storage, history, reports, and plans.
 - Cross-platform release archives for Linux, macOS, and Windows.
+- crates.io packages for the core library and CLI.
 - Shell and PowerShell installers, SHA-256 checksums, and GitHub provenance attestations.
 - A reusable GitHub Action that verifies archive provenance before validation.
 - Draft release smoke tests and immutable published release assets.
@@ -44,7 +64,7 @@ First stable production release.
 
 ### Limits
 
-- The tool remains a release gate, not a contract audit.
+- The tool checks release evidence. It does not deploy contracts or replace a contract audit.
 - Storage coverage, deployed callers, migration completion, and business invariants need external evidence.
 - Upgrade and migration commands use separate transactions.
 - A previous WASM hash alone does not prove rollback safety.
@@ -84,7 +104,7 @@ First public evaluation release.
 - Versioned storage declarations and cumulative field history.
 - Protocol-aware CAP-0086 checks and a Protocol 28 runtime witness.
 - Deterministic non-signing upgrade plans.
-- Six Soroban contract fixtures and a verified historical Testnet receipt.
+- Six Soroban contract fixtures.
 
 ### Limits
 

@@ -29,7 +29,7 @@ There is no unrecorded global bypass. Put an approved exception in a reviewed po
 
 Use short sentences and direct terms. Keep commands, option names, finding codes, and JSON field names exact.
 
-Document verified behavior and explicit limits. Do not claim Mainnet safety from tests or one Testnet receipt.
+Document verified behavior and explicit limits. Do not claim Mainnet safety from test evidence.
 
 ## Pull requests
 
@@ -43,4 +43,4 @@ Publish `soroban-upgrades-core` before `soroban-upgrades-cli` for a future crate
 
 Wait until that exact core version exists in the registry. Then package and publish the CLI.
 
-The supported version 1.0.4 distribution uses attested GitHub release binaries.
+The supported version 1.0.5 distribution uses attested GitHub release binaries.

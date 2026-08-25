@@ -1,6 +1,6 @@
 [package]
 name = "soroban-upgrades-core"
-description = "Upgrade-safety analysis and planning for Stellar Soroban contracts"
+description = "Upgrade-safety checks and review plans for Stellar Soroban contracts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 hex.workspace = true

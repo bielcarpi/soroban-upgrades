@@ -19,6 +19,8 @@ Keep the repository clean before the final verification. Do not release from an 
 
 The release workflow contains a checksum patch for the `dist` installer. The `allow-dirty` setting protects that reviewed workflow from generation.
 
+Both crates.io packages restrict publication to the `crates-io` registry. The CLI uses the exact core-library version for each release.
+
 ## Verify the candidate
 
 Run the complete release gate:
@@ -33,7 +35,7 @@ Verify the distribution plan:
 dist plan --output-format=json > dist-plan.json
 ```
 
-Review all target runners and artifact names. Version 1.0.4 supports these targets:
+Review all target runners and artifact names. Version 1.0.5 supports these targets:
 
 - ARM64 macOS
 - x64 macOS
@@ -55,6 +57,14 @@ Validate the workflow files with `actionlint`. Verify that every external action
 The workflow builds native archives, checksums, shell installers, and PowerShell installers. It also creates GitHub provenance attestations for platform archives.
 
 The workflow creates a draft release and tests its action against compiled fixtures. It publishes the release only after that test passes.
+
+For a stable release, the workflow publishes `soroban-upgrades-core` first. It waits for the registry index before it publishes `soroban-upgrades-cli`.
+
+Both crates use crates.io trusted publishing for `bielcarpi/soroban-upgrades` and `release.yml`. The workflow does not store a crates.io API token.
+
+The crates.io authentication action creates a short-lived token through OpenID Connect. The action revokes this token when the job ends.
+
+The workflow announces the GitHub release only after both crates.io packages are available. A workflow retry skips a version that already exists.
 
 GitHub immutable releases lock the published tag and assets against later changes.
 
@@ -83,6 +93,15 @@ soroban-upgrades inspect --wasm a-reviewed-fixture.wasm
 
 Verify that `--version` equals the release tag. Verify that the generated schema parses as JSON.
 
+Install the CLI from crates.io in a clean temporary directory:
+
+```sh
+cargo install soroban-upgrades-cli --version X.Y.Z --locked --root "$INSTALL_ROOT"
+"$INSTALL_ROOT/bin/soroban-upgrades" --version
+```
+
+Open the public pages for both crates. Make sure that the versions are not yanked and that docs.rs built the core API documentation.
+
 Check the public release notes, asset table, checksums, and source archive. Check the CI and Release workflow results again.
 
 ## Repository controls
@@ -90,5 +109,7 @@ Check the public release notes, asset table, checksums, and source archive. Chec
 The main branch requires the release gate and platform tests. GitHub Actions has read-only default permissions outside the release workflow.
 
 The release workflow receives `contents: write` only for release publication. Attestation jobs receive the identity permissions that GitHub requires.
+
+The crates.io job receives `id-token: write` only for trusted publishing. It receives read-only repository contents.
 
 Dependabot checks Cargo and GitHub Actions each week. Private vulnerability reports use GitHub Security Advisories.

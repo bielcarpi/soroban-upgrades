@@ -169,9 +169,4 @@ task_plan="target/showcase-upgrade-plan.json"
 "${task_cli}" verify-plan --plan "${task_plan}" --offline
 
 echo ""
-echo "Historical Testnet receipt"
-echo "  contract: CAVRSELEZ6PAWEXGHPGNQ3VHI4LDT5QUA5MZWSMXYQLE7HACO6G3TUMJ"
-echo "  tx:       f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda"
-echo "  result:   state survived. The v2 code and migrations were verified."
-echo ""
 echo "SHOWCASE PASS: read-only analysis with no keys, signatures, uploads, or transactions."

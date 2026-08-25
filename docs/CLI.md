@@ -1,6 +1,6 @@
 # CLI reference
 
-This reference describes Soroban Upgrades 1.0.4. All JSON input parsers reject unknown fields and duplicate fields.
+This reference describes Soroban Upgrades 1.0.5. All JSON input parsers reject unknown fields and duplicate fields.
 
 ## Exit status
 

@@ -1,24 +1,30 @@
 # Soroban Upgrades
 
 [![CI](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml)
-[![Release: v1.0.4](https://img.shields.io/badge/release-v1.0.4-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.4)
+[![Release: v1.0.5](https://img.shields.io/badge/release-v1.0.5-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.5)
+[![crates.io](https://img.shields.io/crates/v/soroban-upgrades-cli.svg)](https://crates.io/crates/soroban-upgrades-cli)
+[![docs.rs: core](https://docs.rs/soroban-upgrades-core/badge.svg)](https://docs.rs/soroban-upgrades-core)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> Block unsafe Soroban contract upgrades before a signer approves them.
+> Check Soroban contract upgrades before a signer approves them.
 
-Soroban Upgrades is a production release gate for compiled Soroban contracts. It compares exact WASM files and checks their release evidence.
+Soroban Upgrades is an independent checker for compiled Soroban contract upgrades. It compares exact WASM files and checks their release evidence.
 
-The gate checks the public interface, storage declarations, schema history, contract version, host interface, protocol evidence, and upgrade path.
+The checker examines the public interface, storage declarations, schema history, contract version, host interface, protocol evidence, and upgrade path.
 
-It also creates a deterministic review plan. The plan binds every important release input to a SHA-256 digest.
+It can also create a deterministic review plan. The plan binds every important release input to a SHA-256 digest.
+
+The CLI does not deploy contracts or execute the review plan. You can deploy a contract without this tool.
 
 The CLI never holds keys, signs data, uploads WASM, or submits transactions.
 
 ## Production status
 
-Version 1.0.4 defines stable policy, report, schema, history, and plan formats. Later 1.x releases keep these formats backward compatible.
+Version 1.0.5 uses the stable policy, report, schema, history, and plan formats from 1.0.4. Later 1.x releases keep these formats backward compatible.
 
 The release provides binaries for Linux, macOS, and Windows. GitHub attaches checksums and provenance attestations to the platform archives.
+
+The [CLI](https://crates.io/crates/soroban-upgrades-cli) and [core library](https://crates.io/crates/soroban-upgrades-core) are available on crates.io. Future releases use short-lived credentials through trusted publishing.
 
 The release workflow tests the published action before publication. GitHub then locks the release tag and assets against later changes.
 
@@ -28,25 +34,31 @@ Read [Security limits](#security-limits) before you use a report for Mainnet app
 
 ## Install
 
-The release page provides shell and PowerShell installers.
+Install the pinned release from crates.io. This method needs Rust 1.93 or later.
+
+```sh
+cargo install soroban-upgrades-cli --version 1.0.5 --locked
+```
+
+The release page also provides prebuilt shell and PowerShell installers. These installers do not need a Rust toolchain.
 
 macOS or Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.4/soroban-upgrades-cli-installer.sh | sh
+  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.5/soroban-upgrades-cli-installer.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.4/soroban-upgrades-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.5/soroban-upgrades-cli-installer.ps1 | iex"
 ```
 
 For an approval system, download the platform archive and verify its attestation before extraction:
 
 ```sh
-gh release download v1.0.4 \
+gh release download v1.0.5 \
   --repo bielcarpi/soroban-upgrades \
   --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz'
 gh attestation verify \
@@ -91,7 +103,7 @@ Use `--compact` for a short log. Use `--json` to keep the complete evidence repo
 The action downloads the release archive and verifies its GitHub attestation. It writes the report before it returns status `2`.
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.4
+- uses: bielcarpi/soroban-upgrades@v1.0.5
   with:
     from: artifacts/old.wasm
     to: artifacts/new.wasm
@@ -185,21 +197,11 @@ The gate checks the compiled imports and reachable calls. It reports per-type re
 
 The [runtime witness](experiments/cap0086-runtime/) tests safe and unsafe reader and writer directions against host version 28.0.1.
 
-## Historical Testnet evidence
-
-On 5 August 2026, the reference contract kept its address and state through a Testnet WASM replacement.
-
-The [`executable_update` transaction](https://stellar.expert/explorer/testnet/tx/f7584b5c2c753ffcba2ccd60691714893e86a9c52a80e00d2ef3e9a39c25ccda) occurred at ledger `3,985,019`.
-
-The fetched executable matched the reviewed target hash. The preserved counter returned `2`, and the new `paused` function returned `false`.
-
-This receipt proves one historical Testnet execution. It does not prove external adoption or Mainnet safety.
-
 ## Security limits
 
-Treat `PASS` as one release gate, not as a security guarantee.
+A `PASS` result means that the configured checks passed. It is not a security guarantee.
 
-The gate does not observe these facts without external evidence:
+The checker does not observe these facts without external evidence:
 
 - all deployed callers and their decoding behavior
 - every historical ledger entry
