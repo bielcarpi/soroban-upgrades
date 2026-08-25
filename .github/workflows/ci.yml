@@ -31,9 +31,21 @@ jobs:
       - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: cargo-audit@0.22.2
-      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
-        with:
-          tool: actionlint@1.7.12
+      - name: Install actionlint
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_x86_64.tar.gz"
+          checksums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
+            --output "$RUNNER_TEMP/$archive"
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${checksums}" \
+            --output "$RUNNER_TEMP/$checksums"
+          (cd "$RUNNER_TEMP" && grep " ${archive}$" "$checksums" | sha256sum --check)
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$CARGO_HOME/bin" actionlint
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
       - name: Verify release behavior and evidence
         run: ./scripts/verify-release.sh
