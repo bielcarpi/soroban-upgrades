@@ -1426,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-upgrades-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "hex",
  "schemars 0.8.22",

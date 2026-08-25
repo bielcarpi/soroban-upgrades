@@ -343,32 +343,17 @@ jobs:
           artifacts=(artifacts/*)
           "${release_args[@]}" "${artifacts[@]}"
 
-  release-smoke:
-    name: Verify the published action and binary
+  stage-draft:
+    name: Stage the draft release archive
     needs:
       - plan
       - host
     if: ${{ always() && needs.host.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
-      attestations: read
-      contents: read
+      contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
-        with:
-          toolchain: 1.93.0
-          targets: wasm32v1-none
-      - uses: stellar/stellar-cli@8e402ea28202950b272fbabc34caad4d2f64fe87 # v27.1.0
-        with:
-          version: 27.1.0
-      - name: Build release fixtures
-        run: |
-          stellar contract build --package counter-v1
-          stellar contract build --package counter-v2
       - name: Download the draft release archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -390,10 +375,50 @@ jobs:
             echo "The draft release archive was not found." >&2
             exit 1
           fi
+          mkdir -p target/release-smoke
           gh api \
             -H "Accept: application/octet-stream" \
             "repos/bielcarpi/soroban-upgrades/releases/assets/$asset_id" \
-            > "target/$ARCHIVE_NAME"
+            > "target/release-smoke/$ARCHIVE_NAME"
+      - name: Stage the verified draft input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: draft-release-smoke-${{ needs.plan.outputs.tag }}
+          path: target/release-smoke/soroban-upgrades-cli-x86_64-unknown-linux-gnu.tar.xz
+          if-no-files-found: error
+          retention-days: 1
+
+  release-smoke:
+    name: Verify the published action and binary
+    needs:
+      - plan
+      - stage-draft
+    if: ${{ always() && needs.stage-draft.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      attestations: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.93.0
+          targets: wasm32v1-none
+      - uses: stellar/stellar-cli@8e402ea28202950b272fbabc34caad4d2f64fe87 # v27.1.0
+        with:
+          version: 27.1.0
+      - name: Build release fixtures
+        run: |
+          stellar contract build --package counter-v1
+          stellar contract build --package counter-v2
+      - name: Fetch the staged draft archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: draft-release-smoke-${{ needs.plan.outputs.tag }}
+          path: target
       - name: Run the published action
         uses: ./
         with:

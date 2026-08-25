@@ -2,7 +2,7 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
-## 1.0.3 (2026-08-25)
+## 1.0.4 (2026-08-25)
 
 First stable production release.
 
@@ -39,7 +39,8 @@ First stable production release.
 
 ### Fixed
 
-- The draft release gate now handles an absent release and retries asset discovery.
+- A separate staging job now reads the draft with a write-scoped token.
+- The validation job keeps read-only contents access while it runs the project Action.
 
 ### Limits
 
@@ -47,6 +48,12 @@ First stable production release.
 - Storage coverage, deployed callers, migration completion, and business invariants need external evidence.
 - Upgrade and migration commands use separate transactions.
 - A previous WASM hash alone does not prove rollback safety.
+
+## 1.0.3 (unpublished)
+
+The draft smoke test confirmed that a read-only workflow token cannot list draft releases.
+
+Version 1.0.4 isolates draft access from the validation job.
 
 ## 1.0.2 (unpublished)
 
