@@ -46,7 +46,7 @@ jobs:
             --output "$RUNNER_TEMP/$checksums"
           (cd "$RUNNER_TEMP" && grep " ${archive}$" "$checksums" | sha256sum --check)
           tar -xzf "$RUNNER_TEMP/$archive" -C "$CARGO_HOME/bin" actionlint
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Verify release behavior and evidence
         run: ./scripts/verify-release.sh
 
@@ -71,7 +71,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.93.0
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test the library and CLI
         run: cargo test --locked --package soroban-upgrades-core --package soroban-upgrades-cli
       - name: Build the release binary
