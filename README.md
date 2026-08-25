@@ -1,7 +1,7 @@
 # Soroban Upgrades
 
 [![CI](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml)
-[![Release: v1.0.2](https://img.shields.io/badge/release-v1.0.2-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.2)
+[![Release: v1.0.3](https://img.shields.io/badge/release-v1.0.3-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.3)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > Block unsafe Soroban contract upgrades before a signer approves them.
@@ -16,7 +16,7 @@ The CLI never holds keys, signs data, uploads WASM, or submits transactions.
 
 ## Production status
 
-Version 1.0.2 defines stable policy, report, schema, history, and plan formats. Later 1.x releases keep these formats backward compatible.
+Version 1.0.3 defines stable policy, report, schema, history, and plan formats. Later 1.x releases keep these formats backward compatible.
 
 The release provides binaries for Linux, macOS, and Windows. GitHub attaches checksums and provenance attestations to the platform archives.
 
@@ -34,19 +34,19 @@ macOS or Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.2/soroban-upgrades-cli-installer.sh | sh
+  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.3/soroban-upgrades-cli-installer.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.2/soroban-upgrades-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.3/soroban-upgrades-cli-installer.ps1 | iex"
 ```
 
 For an approval system, download the platform archive and verify its attestation before extraction:
 
 ```sh
-gh release download v1.0.2 \
+gh release download v1.0.3 \
   --repo bielcarpi/soroban-upgrades \
   --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz'
 gh attestation verify \
@@ -91,7 +91,7 @@ Use `--compact` for a short log. Use `--json` to keep the complete evidence repo
 The action downloads the release archive and verifies its GitHub attestation. It writes the report before it returns status `2`.
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.2
+- uses: bielcarpi/soroban-upgrades@v1.0.3
   with:
     from: artifacts/old.wasm
     to: artifacts/new.wasm

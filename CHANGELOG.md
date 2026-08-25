@@ -2,7 +2,7 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
-## 1.0.2 (2026-08-25)
+## 1.0.3 (2026-08-25)
 
 First stable production release.
 
@@ -39,7 +39,7 @@ First stable production release.
 
 ### Fixed
 
-- The draft release gate now retries asset discovery while GitHub updates its release API.
+- The draft release gate now handles an absent release and retries asset discovery.
 
 ### Limits
 
@@ -47,6 +47,12 @@ First stable production release.
 - Storage coverage, deployed callers, migration completion, and business invariants need external evidence.
 - Upgrade and migration commands use separate transactions.
 - A previous WASM hash alone does not prove rollback safety.
+
+## 1.0.2 (unpublished)
+
+The draft smoke test stopped publication because its selector tried to iterate an absent asset list.
+
+Version 1.0.3 uses a null-safe selector before the bounded retry.
 
 ## 1.0.1 (unpublished)
 

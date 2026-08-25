@@ -379,7 +379,7 @@ jobs:
           asset_id=""
           for attempt in {1..24}; do
             asset_id="$(gh api "repos/bielcarpi/soroban-upgrades/releases?per_page=100" \
-              --jq "map(select(.tag_name == \"$RELEASE_TAG\" and .draft == true))[0].assets | map(select(.name == \"$ARCHIVE_NAME\"))[0].id // empty")"
+              --jq "map(select(.tag_name == \"$RELEASE_TAG\" and .draft == true) | .assets[]? | select(.name == \"$ARCHIVE_NAME\") | .id) | first // empty")"
             if [[ -n "$asset_id" ]]; then
               break
             fi

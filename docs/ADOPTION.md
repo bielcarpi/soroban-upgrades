@@ -69,7 +69,7 @@ There is no global bypass flag. A permitted compatibility change belongs in a re
 Build both artifacts before validation. Use the same release toolchain for the candidate that you use for upload.
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.2
+- uses: bielcarpi/soroban-upgrades@v1.0.3
   with:
     from: artifacts/deployed.wasm
     to: artifacts/candidate.wasm
