@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-upgrades-cli"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-upgrades-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "hex",
  "schemars 0.8.22",

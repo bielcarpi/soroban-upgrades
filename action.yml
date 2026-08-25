@@ -6,7 +6,7 @@ inputs:
   version:
     description: Soroban Upgrades release version without the v prefix.
     required: false
-    default: "1.0.1"
+    default: "1.0.2"
   archive-path:
     description: Optional path to a downloaded platform archive. The action still verifies its GitHub attestation.
     required: false

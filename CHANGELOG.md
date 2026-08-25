@@ -2,7 +2,7 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
-## 1.0.1 (2026-08-25)
+## 1.0.2 (2026-08-25)
 
 First stable production release.
 
@@ -37,6 +37,10 @@ First stable production release.
 - Plans reject Stellar secret keys in identity, migration, and invariant arguments.
 - Release workflows pin external actions and verify the `dist` installer checksum.
 
+### Fixed
+
+- The draft release gate now retries asset discovery while GitHub updates its release API.
+
 ### Limits
 
 - The tool remains a release gate, not a contract audit.
@@ -44,11 +48,17 @@ First stable production release.
 - Upgrade and migration commands use separate transactions.
 - A previous WASM hash alone does not prove rollback safety.
 
+## 1.0.1 (unpublished)
+
+The draft smoke test stopped publication because its first API query did not show the new archive.
+
+Version 1.0.2 adds a bounded retry for GitHub release API consistency.
+
 ## 1.0.0 (unpublished)
 
 The draft smoke test stopped publication because standard release download does not expose draft assets.
 
-Version 1.0.1 adds an attested draft-archive path for the release smoke test.
+Version 1.0.1 added an attested draft-archive path for the release smoke test.
 
 ## 0.1.0-alpha.1 (2026-08-06)
 

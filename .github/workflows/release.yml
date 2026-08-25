@@ -376,9 +376,16 @@ jobs:
           ARCHIVE_NAME: soroban-upgrades-cli-x86_64-unknown-linux-gnu.tar.xz
         run: |
           set -euo pipefail
-          asset_id="$(gh api --paginate repos/bielcarpi/soroban-upgrades/releases \
-            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\" and .draft == true) | .assets[] | select(.name == \"$ARCHIVE_NAME\") | .id" \
-            | head -n 1)"
+          asset_id=""
+          for attempt in {1..24}; do
+            asset_id="$(gh api "repos/bielcarpi/soroban-upgrades/releases?per_page=100" \
+              --jq "map(select(.tag_name == \"$RELEASE_TAG\" and .draft == true))[0].assets | map(select(.name == \"$ARCHIVE_NAME\"))[0].id // empty")"
+            if [[ -n "$asset_id" ]]; then
+              break
+            fi
+            echo "The draft asset is not visible yet. Attempt $attempt of 24."
+            sleep 5
+          done
           if [[ -z "$asset_id" ]]; then
             echo "The draft release archive was not found." >&2
             exit 1
