@@ -27,7 +27,7 @@ expect_validation_failure() {
     echo "${task_name} returned ${task_status}. Expected blocked status 2." >&2
     exit 1
   fi
-  if ! rg --quiet '^BLOCKED ' "${task_log}"; then
+  if ! grep --quiet '^BLOCKED ' "${task_log}"; then
     cat "${task_log}" >&2
     echo "${task_name} failed without a structured blocked verdict" >&2
     exit 1
@@ -36,7 +36,8 @@ expect_validation_failure() {
 }
 
 actionlint
-if rg --line-number 'uses: [^@]+@(main|master|v[0-9])' .github/workflows; then
+if grep --recursive --line-number --extended-regexp \
+  'uses: [^@]+@(main|master|v[0-9])' .github/workflows; then
   echo "A workflow action is not pinned to a full commit SHA" >&2
   exit 1
 fi
