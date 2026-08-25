@@ -20,6 +20,8 @@ Version 1.0.0 defines stable policy, report, schema, history, and plan formats. 
 
 The release provides binaries for Linux, macOS, and Windows. GitHub attaches checksums and provenance attestations to the platform archives.
 
+The release workflow tests the published action before publication. GitHub then locks the release tag and assets against later changes.
+
 The tool is not a security audit. It cannot prove business logic, authorization rules, ledger coverage, or migration completion.
 
 Read [Security limits](#security-limits) before you use a report for Mainnet approval.

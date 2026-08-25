@@ -62,6 +62,8 @@ Release builds run on GitHub-hosted platform runners. The workflow pins every ex
 
 The workflow verifies the `dist` installer checksum before execution. GitHub creates provenance attestations for each platform archive.
 
+The workflow tests the draft release through the public action before publication. GitHub immutable releases then lock the tag and assets.
+
 Verify an archive before you use it in an approval system:
 
 ```sh

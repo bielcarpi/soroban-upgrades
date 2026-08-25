@@ -12,6 +12,7 @@ First stable production release.
 - Cross-platform release archives for Linux, macOS, and Windows.
 - Shell and PowerShell installers, SHA-256 checksums, and GitHub provenance attestations.
 - A reusable GitHub Action that verifies archive provenance before validation.
+- Draft release smoke tests and immutable published release assets.
 - Live plan checks for network identity, protocol, and current deployed executable.
 - Required application invariant commands in signer review plans.
 - Compiled host-call checks for the current and retained WASM replacement paths.

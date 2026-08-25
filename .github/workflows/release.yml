@@ -335,6 +335,7 @@ jobs:
             --target "$RELEASE_COMMIT"
             --title "$ANNOUNCEMENT_TITLE"
             --notes-file "$notes"
+            --draft
           )
           if [[ -n "$PRERELEASE_FLAG" ]]; then
             release_args+=(--prerelease)
@@ -395,6 +396,8 @@ jobs:
     if: ${{ always() && needs.host.result == 'success' && needs.release-smoke.result == 'success' }}
     runs-on: "ubuntu-22.04"
     timeout-minutes: 10
+    permissions:
+      "contents": "write"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -402,3 +405,5 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Publish the verified release
+        run: gh release edit "${{ needs.plan.outputs.tag }}" --draft=false

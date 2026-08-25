@@ -54,6 +54,10 @@ Validate the workflow files with `actionlint`. Verify that every external action
 
 The workflow builds native archives, checksums, shell installers, and PowerShell installers. It also creates GitHub provenance attestations for platform archives.
 
+The workflow creates a draft release and tests its action against compiled fixtures. It publishes the release only after that test passes.
+
+GitHub immutable releases lock the published tag and assets against later changes.
+
 Do not move or reuse a failed public release tag. Fix the problem and use a new patch version.
 
 ## Verify the published release
