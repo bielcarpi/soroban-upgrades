@@ -9,9 +9,13 @@ updates:
       timezone: Europe/Andorra
     open-pull-requests-limit: 5
     groups:
-      rust-dependencies:
+      compatible-rust-dependencies:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /
