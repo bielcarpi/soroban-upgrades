@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "complete": true,
+  "types": {
+    "Config": {
+      "fields": {
+        "count": {
+          "type": "u32",
+          "firstSeen": "1.0.0"
+        }
+      },
+      "reservedFields": []
+    }
+  }
+}

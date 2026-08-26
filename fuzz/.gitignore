@@ -1,0 +1,8 @@
+/artifacts/
+/coverage/
+/target/
+/corpus/**
+!/corpus/parser-inputs/
+!/corpus/parser-inputs/valid-policy.json
+!/corpus/parser-inputs/valid-storage.json
+!/corpus/parser-inputs/valid-history.json

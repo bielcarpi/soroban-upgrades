@@ -1,0 +1,45 @@
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "MIT",
+    "NCSA",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "simplest-path"
+workspace-default-features = "allow"
+external-default-features = "allow"
+skip = [
+    { crate = "block-buffer@0.10.4", reason = "Soroban SDK 27 uses both digest generations" },
+    { crate = "cpufeatures@0.2.17", reason = "Soroban SDK 27 uses both digest generations" },
+    { crate = "crate-git-revision@0.0.6", reason = "Soroban SDK 27 uses two upstream build-helper generations" },
+    { crate = "crypto-common@0.1.6", reason = "Soroban SDK 27 uses both digest generations" },
+    { crate = "curve25519-dalek@4.1.3", reason = "Soroban SDK 27 uses two upstream curve generations" },
+    { crate = "darling@0.20.11", reason = "Soroban SDK 27 uses two upstream macro generations" },
+    { crate = "darling_core@0.20.11", reason = "Soroban SDK 27 uses two upstream macro generations" },
+    { crate = "darling_macro@0.20.11", reason = "Soroban SDK 27 uses two upstream macro generations" },
+    { crate = "digest@0.10.7", reason = "Soroban SDK 27 uses both digest generations" },
+    { crate = "fiat-crypto@0.2.9", reason = "Soroban SDK 27 uses two upstream curve generations" },
+    { crate = "hashbrown@0.15.5", reason = "Soroban SDK 27 and the checker parser use different upstream generations" },
+    { crate = "stellar-strkey@0.0.13", reason = "Stellar XDR 27 and Soroban SDK 27 pin different upstream versions" },
+    { crate = "syn@2.0.119", reason = "The locked macro graph contains two upstream syn generations" },
+    { crate = "thiserror@1.0.69", reason = "Soroban SDK 27 and the checker use different upstream generations" },
+    { crate = "thiserror-impl@1.0.69", reason = "Soroban SDK 27 and the checker use different upstream generations" },
+    { crate = "wasmparser@0.116.1", reason = "Soroban SDK 27 and the checker use different parser generations" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

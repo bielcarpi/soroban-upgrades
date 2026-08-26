@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -24,13 +26,13 @@ jobs:
         with:
           toolchain: 1.93.0
           targets: wasm32v1-none
-          components: rustfmt, clippy
-      - uses: stellar/stellar-cli@8e402ea28202950b272fbabc34caad4d2f64fe87 # v27.1.0
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: stellar/stellar-cli@300aaf69ab100536678bdb641428b06f06b318ea # v28.0.0
         with:
-          version: 27.1.0
+          version: 28.0.0
       - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-llvm-cov@0.9.0,cargo-semver-checks@0.50.0
       - name: Install actionlint
         shell: bash
         env:
@@ -46,7 +48,7 @@ jobs:
             --output "$RUNNER_TEMP/$checksums"
           (cd "$RUNNER_TEMP" && grep " ${archive}$" "$checksums" | sha256sum --check)
           tar -xzf "$RUNNER_TEMP/$archive" -C "$CARGO_HOME/bin" actionlint
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Verify release behavior and evidence
         run: ./scripts/verify-release.sh
 
@@ -71,7 +73,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.93.0
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test the library and CLI
         run: cargo test --locked --package soroban-upgrades-core --package soroban-upgrades-cli
       - name: Build the release binary

@@ -2319,7 +2319,7 @@ fn compare_storage_schemas(
                             new_entry.durability,
                             new_entry.value_type
                         ),
-                        "Declare an eager, lazy, or versioned migration and test it before generating an execution plan.",
+                        "Declare an eager, lazy, or versioned migration and test it before generating a signer review plan.",
                     ));
                 }
             }
@@ -2547,6 +2547,7 @@ pub fn create_plan_with_paths(
         invariant_check,
     } = operations;
     validate_plan_input_paths(&inputs)?;
+    validate_plan_string("network", network, 256)?;
     if stellar_strkey::Contract::from_string(contract_id).is_err() {
         return Err(Error::InvalidContractId(contract_id.into()));
     }
@@ -2796,6 +2797,12 @@ pub fn create_plan_with_paths(
         validation: report,
         steps,
     };
+    let encoded = serde_json::to_string(&plan)?;
+    if contains_stellar_private_key(&encoded) {
+        return Err(Error::Plan(
+            "plan evidence must not contain a Stellar private key".into(),
+        ));
+    }
     plan.plan_sha256 = calculate_plan_sha256(&plan)?;
     Ok(plan)
 }
@@ -2910,6 +2917,11 @@ fn validate_invariant_check(check: &InvariantCheck) -> Result<(), Error> {
             "invariant program must be a non-empty command name without whitespace".into(),
         ));
     }
+    if contains_stellar_private_key(&check.program) {
+        return Err(Error::Plan(
+            "invariant program must not contain a private key".into(),
+        ));
+    }
     for argument in &check.arguments {
         if argument.len() > 4_096 || argument.chars().any(char::is_control) {
             return Err(Error::Plan(
@@ -2917,10 +2929,7 @@ fn validate_invariant_check(check: &InvariantCheck) -> Result<(), Error> {
                     .into(),
             ));
         }
-        if matches!(
-            stellar_strkey::Strkey::from_string(argument),
-            Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
-        ) {
+        if contains_stellar_private_key(argument) {
             return Err(Error::Plan(
                 "invariant arguments must not contain private keys".into(),
             ));
@@ -2938,21 +2947,42 @@ fn validate_plan_input_paths(paths: &PlanInputPaths) -> Result<(), Error> {
         ("schema history", paths.schema_history.as_str()),
     ];
     for (label, path) in required {
-        if path.is_empty() || path.len() > 4_096 || path.chars().any(char::is_control) {
-            return Err(Error::Plan(format!(
-                "{label} path must be non-empty, contain no control characters, and stay within 4096 bytes"
-            )));
-        }
+        validate_plan_string(&format!("{label} path"), path, 4_096)?;
     }
     if let Some(path) = &paths.policy {
-        if path.is_empty() || path.len() > 4_096 || path.chars().any(char::is_control) {
-            return Err(Error::Plan(
-                "policy path must be non-empty, contain no control characters, and stay within 4096 bytes"
-                    .into(),
-            ));
-        }
+        validate_plan_string("policy path", path, 4_096)?;
     }
     Ok(())
+}
+
+fn validate_plan_string(label: &str, value: &str, maximum_bytes: usize) -> Result<(), Error> {
+    if value.is_empty() || value.len() > maximum_bytes || value.chars().any(char::is_control) {
+        return Err(Error::Plan(format!(
+            "{label} must be non-empty, contain no control characters, and stay within {maximum_bytes} bytes"
+        )));
+    }
+    if contains_stellar_private_key(value) {
+        return Err(Error::Plan(format!(
+            "{label} must not contain a Stellar private key"
+        )));
+    }
+    Ok(())
+}
+
+const STELLAR_SECRET_SEED_LENGTH: usize = 56;
+
+fn contains_stellar_private_key(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(STELLAR_SECRET_SEED_LENGTH)
+        .filter(|candidate| candidate[0] == b'S' && candidate.is_ascii())
+        .filter_map(|candidate| std::str::from_utf8(candidate).ok())
+        .any(|candidate| {
+            matches!(
+                stellar_strkey::Strkey::from_string(candidate),
+                Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
+            )
+        })
 }
 
 fn validate_standard_upgrade_entrypoint(target: &Artifact) -> Result<(), Error> {
@@ -3035,10 +3065,7 @@ fn validate_call_arguments(
         )));
     }
     for value in arguments.values() {
-        if matches!(
-            stellar_strkey::Strkey::from_string(value),
-            Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
-        ) {
+        if contains_stellar_private_key(value) {
             return Err(Error::Plan(
                 "plan arguments must not contain private keys".into(),
             ));
@@ -3059,10 +3086,7 @@ fn validate_source_identity(source_identity: &str) -> Result<(), Error> {
                 .into(),
         ));
     }
-    if matches!(
-        stellar_strkey::Strkey::from_string(source_identity),
-        Ok(stellar_strkey::Strkey::PrivateKeyEd25519(_))
-    ) {
+    if contains_stellar_private_key(source_identity) {
         return Err(Error::Plan(
             "source identity must not contain a private key. Use a Stellar CLI alias or public account"
                 .into(),
@@ -3504,6 +3528,38 @@ mod tests {
     }
 
     #[test]
+    fn private_key_scanner_rejects_a_seed_at_every_byte_offset() {
+        let secret = stellar_strkey::ed25519::PrivateKey([8; 32]).to_string();
+        for offset in 0..128 {
+            let value = format!(
+                "{}{}{}",
+                "x".repeat(offset),
+                secret,
+                "y".repeat(128 - offset)
+            );
+            assert!(
+                contains_stellar_private_key(&value),
+                "missed offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_key_scanner_handles_unicode_and_near_matches() {
+        let secret = stellar_strkey::ed25519::PrivateKey([10; 32]).to_string();
+        assert!(contains_stellar_private_key(&format!(
+            "blue=🔒{secret}:end"
+        )));
+
+        let mut invalid_checksum = secret.into_bytes();
+        let last = invalid_checksum.last_mut().unwrap();
+        *last = if *last == b'A' { b'B' } else { b'A' };
+        let invalid_checksum = String::from_utf8(invalid_checksum).unwrap();
+        assert!(!contains_stellar_private_key(&invalid_checksum));
+        assert!(!contains_stellar_private_key(&"S".repeat(56)));
+    }
+
+    #[test]
     fn policy_json_rejects_unknown_fields() {
         let json = br#"{
             "formatVersion": 1,
@@ -3623,6 +3679,83 @@ mod tests {
                         arguments: vec![secret],
                     },
                 },
+            ),
+            Err(Error::Plan(message)) if message.contains("private key")
+        ));
+    }
+
+    #[test]
+    fn plan_rejects_private_keys_embedded_in_structured_arguments_and_paths() {
+        let secret = stellar_strkey::ed25519::PrivateKey([11; 32]).to_string();
+        let report = safe_report();
+        assert!(matches!(
+            create_plan_with_paths(
+                report.clone(),
+                "testnet",
+                TEST_CONTRACT_ID,
+                "deployer",
+                PlanInputPaths {
+                    source_wasm: "source.wasm".into(),
+                    target_wasm: format!("artifacts/{secret}/target.wasm"),
+                    source_schema: "source.schema.json".into(),
+                    target_schema: "target.schema.json".into(),
+                    schema_history: "schema-history.json".into(),
+                    policy: None,
+                },
+                PlanOperations {
+                    migration: None,
+                    invariant_check: InvariantCheck {
+                        program: "verify-upgrade".into(),
+                        arguments: vec!["testnet".into()],
+                    },
+                },
+            ),
+            Err(Error::Plan(message)) if message.contains("private key")
+        ));
+
+        assert!(matches!(
+            create_plan_with_paths(
+                report,
+                "testnet",
+                TEST_CONTRACT_ID,
+                "deployer",
+                PlanInputPaths {
+                    source_wasm: "source.wasm".into(),
+                    target_wasm: "target.wasm".into(),
+                    source_schema: "source.schema.json".into(),
+                    target_schema: "target.schema.json".into(),
+                    schema_history: "schema-history.json".into(),
+                    policy: None,
+                },
+                PlanOperations {
+                    migration: None,
+                    invariant_check: InvariantCheck {
+                        program: "verify-upgrade".into(),
+                        arguments: vec![format!(r#"{{"secret":"{secret}"}}"#)],
+                    },
+                },
+            ),
+            Err(Error::Plan(message)) if message.contains("private key")
+        ));
+    }
+
+    #[test]
+    fn plan_rejects_private_keys_embedded_in_artifact_evidence() {
+        let secret = stellar_strkey::ed25519::PrivateKey([12; 32]).to_string();
+        let mut report = safe_report();
+        report
+            .target
+            .metadata
+            .insert("operator_hint".into(), format!("ref:{secret}"));
+
+        assert!(matches!(
+            create_plan(
+                report,
+                "testnet",
+                TEST_CONTRACT_ID,
+                "deployer",
+                "target.wasm",
+                None,
             ),
             Err(Error::Plan(message)) if message.contains("private key")
         ));

@@ -13,7 +13,7 @@ fn help_exposes_the_complete_read_only_workflow() {
     for command in ["inspect", "schema", "validate", "plan", "verify-plan"] {
         assert!(stdout.contains(command), "help omitted {command}");
     }
-    assert!(stdout.contains("Validate and plan safe Soroban contract upgrades"));
+    assert!(stdout.contains("Check compiled Soroban contract upgrades before signer review"));
 }
 
 #[test]

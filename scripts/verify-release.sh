@@ -8,6 +8,7 @@ fi
 
 task_tmp="$(mktemp -d)"
 trap 'rm -rf "${task_tmp}"' EXIT
+task_semver_baseline_version="1.0.6"
 
 expect_validation_failure() {
   local task_name="$1"
@@ -46,6 +47,12 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+cargo semver-checks check-release \
+  --package soroban-upgrades-core \
+  --baseline-version "${task_semver_baseline_version}"
+cargo llvm-cov --locked --package soroban-upgrades-core --fail-under-lines 80 --summary-only
+cargo deny --locked check bans licenses sources
+cargo deny --manifest-path fuzz/Cargo.toml --locked check bans licenses sources
 
 stellar contract build --package counter-v1
 stellar contract build --package counter-v2
@@ -122,5 +129,6 @@ cargo package --locked --allow-dirty --package soroban-upgrades-core
 # `paste` is an unmaintained build-only dependency in the Soroban fixture stack.
 # It is not part of the distributed CLI dependency graph.
 cargo audit --deny warnings --ignore RUSTSEC-2024-0436
+cargo audit --file fuzz/Cargo.lock --deny warnings
 
 echo "Release verification passed: safe upgrade accepted, unsafe changes rejected, runtime directions witnessed, and release evidence verified."

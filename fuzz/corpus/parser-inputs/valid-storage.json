@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "complete": true,
+  "schemaVersion": 1,
+  "contractVersion": "1.0.0",
+  "entries": [
+    {
+      "key": "Admin",
+      "durability": "instance",
+      "type": "Address"
+    }
+  ]
+}

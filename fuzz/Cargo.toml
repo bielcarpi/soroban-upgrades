@@ -1,0 +1,29 @@
+[package]
+name = "soroban-upgrades-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1.4"
+libfuzzer-sys = "0.4"
+soroban-upgrades-core = { version = "=1.0.7", path = "../crates/soroban-upgrades-core" }
+wasm-smith = "0.244"
+
+[[bin]]
+name = "parser-inputs"
+path = "fuzz_targets/parser_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wasm-inputs"
+path = "fuzz_targets/wasm_inputs.rs"
+test = false
+doc = false
+bench = false
