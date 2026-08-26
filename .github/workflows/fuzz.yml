@@ -2,6 +2,8 @@ name: Fuzz
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
@@ -51,4 +53,4 @@ jobs:
         with:
           workspaces: fuzz
       - name: Exercise untrusted inputs
-        run: cargo +nightly-2026-08-25 fuzz run ${{ matrix.target }} -- -runs=10000 -max_len=65536
+        run: cargo +nightly-2026-08-25 fuzz run ${{ matrix.target }} --target x86_64-unknown-linux-gnu -- -runs=10000 -max_len=65536
