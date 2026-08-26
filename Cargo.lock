@@ -1808,7 +1808,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "soroban-spec",
- "stellar-strkey 0.0.13",
+ "stellar-strkey 0.0.16",
  "stellar-xdr",
  "thiserror 2.0.19",
  "wasmparser 0.244.0",

@@ -38,7 +38,7 @@ sha2 = "0.10"
 soroban-sdk = "27.0.6"
 soroban-spec = "27.0.6"
 stellar-xdr = { version = "=27.0.0", features = ["serde"] }
-stellar-strkey = "0.0.13"
+stellar-strkey = "0.0.16"
 thiserror = "2.0"
 wasmparser = "0.244"
 
