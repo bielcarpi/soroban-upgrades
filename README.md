@@ -1,7 +1,8 @@
 # Soroban Upgrades
 
 [![CI](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/ci.yml)
-[![Release: v1.0.6](https://img.shields.io/badge/release-v1.0.6-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.6)
+[![Fuzz](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/fuzz.yml/badge.svg)](https://github.com/bielcarpi/soroban-upgrades/actions/workflows/fuzz.yml)
+[![Release: v1.0.7](https://img.shields.io/badge/release-v1.0.7-2f855a.svg)](https://github.com/bielcarpi/soroban-upgrades/releases/tag/v1.0.7)
 [![crates.io](https://img.shields.io/crates/v/soroban-upgrades-cli.svg)](https://crates.io/crates/soroban-upgrades-cli)
 [![docs.rs: core](https://docs.rs/soroban-upgrades-core/badge.svg)](https://docs.rs/soroban-upgrades-core)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/bielcarpi/soroban-upgrades/blob/main/LICENSE)
@@ -29,7 +30,7 @@ Read [Checks and evidence](https://github.com/bielcarpi/soroban-upgrades/blob/ma
 Install the pinned release from crates.io with Rust 1.93 or later:
 
 ```sh
-cargo install soroban-upgrades-cli --version 1.0.6 --locked
+cargo install soroban-upgrades-cli --version 1.0.7 --locked
 ```
 
 Prebuilt binaries are available for Linux, macOS, and Windows. Read the [installation guide](https://github.com/bielcarpi/soroban-upgrades/blob/main/docs/INSTALL.md) for installers and provenance checks.
@@ -70,7 +71,7 @@ cd soroban-upgrades
 ## GitHub Action
 
 ```yaml
-- uses: bielcarpi/soroban-upgrades@v1.0.6
+- uses: bielcarpi/soroban-upgrades@v1.0.7
   with:
     from: artifacts/old.wasm
     to: artifacts/new.wasm
@@ -102,6 +103,10 @@ Run the complete repository gate:
 ```sh
 ./scripts/verify-release.sh
 ```
+
+The gate enforces public API compatibility, core line coverage, dependency policy, release packaging, runtime witnesses, and accepted and blocked upgrade fixtures.
+
+Dedicated fuzz targets exercise raw JSON, arbitrary bytes, and generated valid WASM modules on each relevant change and every week.
 
 Read [CONTRIBUTING.md](https://github.com/bielcarpi/soroban-upgrades/blob/main/CONTRIBUTING.md) before you submit a change.
 

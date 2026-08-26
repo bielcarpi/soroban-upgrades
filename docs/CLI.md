@@ -145,7 +145,9 @@ Plan format 3 contains these bindings:
 
 The upload step includes `--optimize=false`. Stellar CLI therefore uploads the reviewed bytes without changing them.
 
-The plan never contains a key or signature. It rejects Stellar secret keys in identity, migration, and invariant arguments.
+The plan never contains a key or signature. The planner scans the complete serialized evidence for Stellar secret seeds.
+
+This scan includes embedded seeds in paths, metadata, identity, migration values, invariant programs, and invariant arguments.
 
 ## `verify-plan`
 

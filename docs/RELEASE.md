@@ -4,7 +4,7 @@ This process applies to maintainers of Soroban Upgrades.
 
 ## Release requirements
 
-Use Rust 1.93.0, Stellar CLI 27.1.0, `cargo-audit` 0.22.2, `actionlint` 1.7.12, and `dist` 0.32.0.
+Use Rust 1.93.0 and Stellar CLI 28.0.0. Use `cargo-audit` 0.22.2, `cargo-deny` 0.20.2, `cargo-llvm-cov` 0.9.0, `cargo-semver-checks` 0.50.0, `actionlint` 1.7.12, and `dist` 0.32.0.
 
 Keep the repository clean before the final verification. Do not release from an unreviewed worktree.
 
@@ -14,8 +14,9 @@ Keep the repository clean before the final verification. Do not release from an 
 2. Update the matching core dependency version in the CLI manifest.
 3. Update `CHANGELOG.md` with the release date and user-visible changes.
 4. Update versioned installation examples in the documentation and action.
-5. Run `cargo update --workspace` to refresh the lock file.
-6. Review the release workflow after any distribution configuration change.
+5. Set `task_semver_baseline_version` in `scripts/verify-release.sh` to the previous stable core release.
+6. Run `cargo update --workspace` to refresh the lock file.
+7. Review the release workflow after any distribution configuration change.
 
 The release workflow contains a checksum patch for the `dist` installer. The `allow-dirty` setting protects that reviewed workflow from generation.
 
@@ -27,6 +28,13 @@ Run the complete release gate:
 
 ```sh
 ./scripts/verify-release.sh
+```
+
+Run both fuzz targets with the pinned nightly toolchain:
+
+```sh
+cargo +nightly-2026-08-25 fuzz run parser-inputs -- -runs=10000 -max_len=65536
+cargo +nightly-2026-08-25 fuzz run wasm-inputs -- -runs=10000 -max_len=65536
 ```
 
 Verify the distribution plan:

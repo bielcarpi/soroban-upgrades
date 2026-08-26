@@ -24,4 +24,4 @@ clap.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-soroban-upgrades-core = { version = "=1.0.6", path = "../soroban-upgrades-core" }
+soroban-upgrades-core = { version = "=1.0.7", path = "../soroban-upgrades-core" }

@@ -1,0 +1,54 @@
+name: Fuzz
+
+on:
+  push:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/soroban-upgrades-core/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/soroban-upgrades-core/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - parser-inputs
+          - wasm-inputs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, pinned 2026-08-05
+        with:
+          toolchain: nightly-2026-08-25
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-fuzz@0.13.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+      - name: Exercise untrusted inputs
+        run: cargo +nightly-2026-08-25 fuzz run ${{ matrix.target }} -- -runs=10000 -max_len=65536

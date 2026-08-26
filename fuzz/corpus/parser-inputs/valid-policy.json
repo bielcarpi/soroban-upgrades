@@ -1,0 +1,7 @@
+{
+  "formatVersion": 1,
+  "name": "fuzz-seed",
+  "requireUpgradeFunction": true,
+  "requireStorageSchema": true,
+  "requireSchemaHistory": true
+}

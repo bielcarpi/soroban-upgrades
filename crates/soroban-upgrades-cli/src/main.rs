@@ -22,7 +22,7 @@ const MAX_JSON_INPUT_SIZE_BYTES: usize = 8 * 1024 * 1024;
 #[command(
     name = "soroban-upgrades",
     version,
-    about = "Validate and plan safe Soroban contract upgrades"
+    about = "Check compiled Soroban contract upgrades before signer review"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -76,7 +76,7 @@ enum Command {
         #[arg(long)]
         schema_history: PathBuf,
     },
-    /// Emit a deterministic, reviewable execution plan. Refuses unsafe upgrades.
+    /// Emit deterministic evidence for signer review. This command does not execute the plan.
     Plan {
         #[arg(long)]
         from: PathBuf,

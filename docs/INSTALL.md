@@ -7,7 +7,7 @@ Soroban Upgrades provides source installation and prebuilt binaries for each sta
 This method needs Rust 1.93 or later.
 
 ```sh
-cargo install soroban-upgrades-cli --version 1.0.6 --locked
+cargo install soroban-upgrades-cli --version 1.0.7 --locked
 ```
 
 Make sure that the installed version matches the selected release:
@@ -24,13 +24,13 @@ macOS or Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.6/soroban-upgrades-cli-installer.sh | sh
+  https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.7/soroban-upgrades-cli-installer.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.6/soroban-upgrades-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/bielcarpi/soroban-upgrades/releases/download/v1.0.7/soroban-upgrades-cli-installer.ps1 | iex"
 ```
 
 The release page provides archives for these targets:
@@ -48,7 +48,7 @@ For an approval system, download the archive before installation. Then verify it
 This example uses Apple Silicon macOS:
 
 ```sh
-gh release download v1.0.6 \
+gh release download v1.0.7 \
   --repo bielcarpi/soroban-upgrades \
   --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz' \
   --pattern 'soroban-upgrades-cli-aarch64-apple-darwin.tar.xz.sha256'

@@ -2,6 +2,35 @@
 
 This file records user-visible changes. The project follows Semantic Versioning for stable 1.x interfaces and file formats.
 
+## 1.0.7 (2026-08-26)
+
+This security release hardens untrusted evidence handling and adds enforced engineering-quality gates.
+
+### Added
+
+- Coverage enforcement for the core checker with an 80% minimum line threshold.
+- Fuzz targets for strict JSON parsers, raw WASM, and generated valid WASM modules.
+- CI fuzz runs for relevant changes and a weekly scheduled run.
+- License, source-registry, wildcard, and duplicate-dependency policy for the product and fuzz graphs through `cargo-deny`.
+- Public Rust API compatibility checks against the previous stable core release.
+
+### Changed
+
+- Soroban SDK, specification, macros, and ledger fixtures now use the coherent stable 27.0.6 stack.
+- The release gate now uses Stellar CLI 28.0.0 and the current pinned Rust cache action.
+- CLI help now describes signer review and states that planning does not execute commands.
+- Every workspace fixture now declares its license and minimum Rust version.
+
+### Security
+
+- Plan creation now detects a Stellar secret seed at any byte offset in serialized plan evidence.
+- The scan covers paths, network names, identities, migration values, invariant commands, and artifact metadata.
+- Adversarial tests cover all seed offsets, Unicode boundaries, invalid checksums, structured values, and untrusted WASM metadata.
+
+### Compatibility
+
+- Version 1.0.7 does not change stable JSON formats, finding codes, or exit statuses.
+
 ## 1.0.6 (2026-08-25)
 
 This documentation release makes the public entry points faster to scan and easier to use.

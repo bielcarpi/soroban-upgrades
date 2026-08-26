@@ -64,6 +64,10 @@ The workflow verifies the `dist` installer checksum before execution. GitHub cre
 
 The workflow tests the draft release through the public action before publication. GitHub immutable releases then lock the tag and assets.
 
+The release gate enforces approved licenses, crates.io-only dependency sources, documented duplicate-version exceptions, and public API compatibility with the previous stable release. These dependency controls include the separate fuzz harness. The gate also requires at least 80% line coverage for the core checker.
+
+Two scheduled fuzz targets exercise strict JSON parsers, raw WASM input, and generated valid WASM modules.
+
 Verify an archive before you use it in an approval system:
 
 ```sh

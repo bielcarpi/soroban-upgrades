@@ -37,6 +37,8 @@ Keep each change focused. Include the problem, release effect, evidence, tests, 
 
 CI runs the full release gate on Linux. It also tests the library and CLI on Linux, macOS, and Windows.
 
+Parser or WASM changes must pass both targets in `fuzz/fuzz_targets`. Keep every crash artifact private until a fix is available.
+
 ## Package order
 
 Publish `soroban-upgrades-core` before `soroban-upgrades-cli` for a future crates.io release.
