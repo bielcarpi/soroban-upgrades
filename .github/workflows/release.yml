@@ -407,7 +407,7 @@ jobs:
         with:
           toolchain: 1.93.0
           targets: wasm32v1-none
-      - uses: stellar/stellar-cli@8e402ea28202950b272fbabc34caad4d2f64fe87 # v27.1.0
+      - uses: stellar/stellar-cli@300aaf69ab100536678bdb641428b06f06b318ea # v28.0.0
         with:
           version: 27.1.0
       - name: Build release fixtures
