@@ -40,7 +40,7 @@ soroban-spec = "27.0.6"
 stellar-xdr = { version = "=27.0.0", features = ["serde"] }
 stellar-strkey = "0.0.13"
 thiserror = "2.0"
-wasmparser = "0.244"
+wasmparser = "0.257"
 
 [profile.release]
 opt-level = "z"
